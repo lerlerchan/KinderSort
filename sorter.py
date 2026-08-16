@@ -1,199 +1,224 @@
 """
-sorter.py — Face recognition logic for KinderSort.
-
-PhotoSorter loads reference encodings and sorts event photos into per-student
-output folders.  All processing is CPU-only (no GPU required).
+sorter.py — Face recognition logic for KinderSort Lite.
 """
 
+import hashlib
 import logging
+import math
+import pickle
 from collections.abc import Callable
 from pathlib import Path
 
+import cv2
 import face_recognition
 import numpy as np
-from PIL import Image, UnidentifiedImageError
+from PIL import Image, ImageEnhance, UnidentifiedImageError
 
-from utils import (
-    build_output_filename,
-    collect_event_images,
-    is_image_file,
-    safe_copy,
-)
+from utils import build_output_filename, collect_event_images, is_image_file, safe_copy
+
+_MODEL_DIR = Path(__file__).parent / "models"
+_PROTOTXT = _MODEL_DIR / "deploy.prototxt"
+_CAFFEMODEL = _MODEL_DIR / "res10_300x300_ssd_iter_140000.caffemodel"
 
 
 class PhotoSorter:
-    """Encapsulates the full sort pipeline from reference loading to file copying.
-
-    Usage::
-
-        sorter = PhotoSorter(reference_folder, events_folder, output_folder, logger)
-        skipped_names = sorter.load_references()   # sync, may show warnings
-        summary = sorter.sort_all(progress_cb, cancelled_cb)
-    """
-
     DISTANCE_THRESHOLD = 0.55
-    """Maximum face distance to consider a match (lower = stricter)."""
-
     MAX_IMAGE_DIMENSION = 1000
-    """Longest side in pixels after resizing for face detection (performance)."""
+    LOW_LIGHT_BRIGHTNESS_THRESHOLD = 70
+    OPENCV_CONFIDENCE_THRESHOLD = 0.5
+    CACHE_FILENAME = ".kindersort_cache.pkl"
 
-    def __init__(
-        self,
-        reference_folder: Path,
-        events_folder: Path,
-        output_folder: Path,
-        logger: logging.Logger,
-    ) -> None:
-        """Store folder paths and logger; initialise empty encoding dict."""
+    def __init__(self, reference_folder: Path, events_folder: Path, output_folder: Path,
+                 logger: logging.Logger, enhance_images: bool = True, use_cache: bool = True):
         self.reference_folder = reference_folder
         self.events_folder = events_folder
         self.output_folder = output_folder
         self.logger = logger
+        self.enhance_images = enhance_images
+        self.use_cache = use_cache
         self._student_encodings: dict[str, np.ndarray] = {}
+        self._opencv_net = None
 
-    # ------------------------------------------------------------------
-    # Reference loading
-    # ------------------------------------------------------------------
+    def _get_opencv_net(self):
+        if self._opencv_net is not None:
+            return self._opencv_net
+        if not _PROTOTXT.exists() or not _CAFFEMODEL.exists():
+            self.logger.warning("OpenCV DNN model files not found. Run: python download_model.py")
+            return None
+        self.logger.info("Loading OpenCV DNN face detector...")
+        self._opencv_net = cv2.dnn.readNetFromCaffe(str(_PROTOTXT), str(_CAFFEMODEL))
+        self._opencv_net.setPreferableBackend(cv2.dnn.DNN_BACKEND_OPENCV)
+        self._opencv_net.setPreferableTarget(cv2.dnn.DNN_TARGET_CPU)
+        return self._opencv_net
 
-    def load_references(
-        self,
-        progress_callback: Callable[[int, int, str], None] | None = None,
-    ) -> list[str]:
-        """Encode every reference photo and store by student name.
+    def _detect_faces_opencv(self, rgb_image: np.ndarray) -> list[tuple]:
+        net = self._get_opencv_net()
+        if net is None:
+            return []
+        # OpenCV DNN expects BGR input
+        bgr = cv2.cvtColor(rgb_image, cv2.COLOR_RGB2BGR)
+        h, w = bgr.shape[:2]
+        # Resize to network input and keep explicit scaling factors so boxes are
+        # mapped back to the original image size deterministically.
+        resized = cv2.resize(bgr, (300, 300))
+        h_res, w_res = resized.shape[:2]  # should be 300x300
+        blob = cv2.dnn.blobFromImage(resized, 1.0, (300, 300), (104.0, 177.0, 123.0))
+        net.setInput(blob)
+        detections = net.forward()
+        locations = []
+        for i in range(detections.shape[2]):
+            confidence = float(detections[0, 0, i, 2])
+            if confidence < self.OPENCV_CONFIDENCE_THRESHOLD:
+                continue
+            # detections are normalized relative to the network input.
+            box = detections[0, 0, i, 3:7] * np.array([w_res, h_res, w_res, h_res])
+            startX_res, startY_res, endX_res, endY_res = box.astype(int)
+            # scale coordinates back to original image size
+            x_scale = w / float(w_res)
+            y_scale = h / float(h_res)
+            startX = int(startX_res * x_scale)
+            startY = int(startY_res * y_scale)
+            endX = int(endX_res * x_scale)
+            endY = int(endY_res * y_scale)
+            startX, startY = max(0, startX), max(0, startY)
+            endX, endY = min(w, endX), min(h, endY)
+            if endX <= startX or endY <= startY:
+                continue
+            # face_recognition expects (top, right, bottom, left)
+            locations.append((startY, endX, endY, startX))
+        return locations
 
-        Iterates over image files in reference_folder.  The student name is the
-        filename stem (e.g. ``Ali.jpg`` → ``"Ali"``).
+    def _detect_faces_with_fallback(self, rgb_image: np.ndarray) -> list[tuple]:
+        locations = self._detect_faces_opencv(rgb_image)
+        if locations:
+            return locations
+        self.logger.debug("OpenCV DNN found no faces, trying dlib HOG...")
+        locations = face_recognition.face_locations(rgb_image, model="hog")
+        if locations:
+            return locations
+        self.logger.debug("HOG found no faces, trying dlib CNN...")
+        return face_recognition.face_locations(rgb_image, model="cnn")
 
-        Args:
-            progress_callback: Optional callable with ``(current, total, name)``
-                called after each student is processed so the GUI can update.
+    def _cache_path(self) -> Path:
+        return self.reference_folder / self.CACHE_FILENAME
 
-        Returns:
-            List of student names whose reference photo had no detectable face.
-            Callers should show a warning for each name in this list.
-        """
-        no_face_names: list[str] = []
+    def _file_hash(self, path: Path) -> str:
+        return hashlib.md5(path.read_bytes()).hexdigest()
 
-        reference_images = sorted(
-            p for p in self.reference_folder.iterdir() if is_image_file(p)
-        )
+    def _load_cache(self) -> dict:
+        cache_path = self._cache_path()
+        if not cache_path.exists():
+            return {}
+        try:
+            with cache_path.open("rb") as f:
+                data = pickle.load(f)
+            if isinstance(data, dict):
+                self.logger.info(f"Loaded embedding cache from {cache_path.name}")
+                return data
+        except Exception:
+            self.logger.warning(f"Failed to load embedding cache {cache_path}: ", exc_info=True)
+        return {}
 
+    def _save_cache(self, cache: dict) -> None:
+        try:
+            tmp = self._cache_path().with_suffix(".tmp")
+            with tmp.open("wb") as f:
+                pickle.dump(cache, f)
+            tmp.replace(self._cache_path())
+            self.logger.info(f"Embedding cache saved to {self.CACHE_FILENAME}")
+        except Exception:
+            self.logger.warning(f"Could not save cache at {self._cache_path()}", exc_info=True)
+
+    def load_references(self, progress_callback: Callable[[int, int, str], None] | None = None) -> list[str]:
+        no_face_names = []
+        reference_images = sorted(p for p in self.reference_folder.iterdir() if is_image_file(p))
         if not reference_images:
-            self.logger.warning("No reference images found in %s", self.reference_folder)
             return no_face_names
 
-        total = len(reference_images)
+        cache = self._load_cache() if self.use_cache else {}
+        updated_cache = {}
+        cache_hits = 0
+
         for current, ref_path in enumerate(reference_images, start=1):
             student_name = ref_path.stem
             if progress_callback:
-                progress_callback(current, total, student_name)
-            try:
-                image = face_recognition.load_image_file(str(ref_path))
-                locations = face_recognition.face_locations(image, model="cnn")
-                encodings = face_recognition.face_encodings(
-                    image, known_face_locations=locations, num_jitters=10, model="large"
-                )
+                progress_callback(current, len(reference_images), student_name)
 
-                if not encodings:
-                    self.logger.warning(
-                        "No face detected in reference photo for %s (%s)",
-                        student_name,
-                        ref_path.name,
-                    )
+            file_hash = self._file_hash(ref_path)
+            cache_key = (ref_path.name, file_hash)
+
+            if self.use_cache and cache_key in cache:
+                encoding = cache[cache_key]
+                if encoding is not None:
+                    self._student_encodings[student_name] = encoding
+                    cache_hits += 1
+                else:
                     no_face_names.append(student_name)
+                updated_cache[cache_key] = encoding
+                continue
+
+            try:
+                # face_recognition.load_image_file returns an RGB numpy array
+                image = face_recognition.load_image_file(str(ref_path))
+                pil_image = Image.fromarray(image)
+                aligned = self._align_face(pil_image, ref_path.name)
+                image = np.array(aligned)
+
+                locations = self._detect_faces_with_fallback(image)
+                # compute encodings; use a sensible jitter count for references
+                encodings = face_recognition.face_encodings(image, known_face_locations=locations,
+                                                            num_jitters=10, model="large")
+                if not encodings:
+                    no_face_names.append(student_name)
+                    updated_cache[cache_key] = None
                     continue
-
-                if len(encodings) > 1:
-                    self.logger.warning(
-                        "Multiple faces in reference photo for %s — using first face only",
-                        student_name,
-                    )
-
                 self._student_encodings[student_name] = encodings[0]
-                self.logger.info("Loaded reference for %s", student_name)
+                updated_cache[cache_key] = encodings[0]
+                self.logger.info(f"Encoded reference for {student_name}")
+            except Exception as e:
+                self.logger.error(f"Could not read {ref_path.name}: {e}")
 
-            except Exception as exc:  # noqa: BLE001
-                self.logger.error(
-                    "Could not read reference photo %s: %s", ref_path.name, exc
-                )
-
-        self.logger.info(
-            "Loaded %d student reference(s)", len(self._student_encodings)
-        )
+        if self.use_cache:
+            self._save_cache(updated_cache)
         return no_face_names
 
-    # ------------------------------------------------------------------
-    # Main sort loop
-    # ------------------------------------------------------------------
-
-    def sort_all(
-        self,
-        progress_callback: Callable[[int, int, str], None],
-        cancelled: Callable[[], bool],
-    ) -> dict[str, int]:
-        """Sort all event photos into per-student output subfolders.
-
-        Processes one image at a time to keep RAM usage low.  For each detected
-        face in a photo the nearest student is identified; the photo is copied
-        to every matched student folder (allowing group shots).  Photos with no
-        match or no face are copied to ``_unmatched/``.
-
-        Args:
-            progress_callback: Called with ``(current, total, filename)`` after
-                each image so the GUI can update its progress bar.
-            cancelled: Zero-arg callable; returns True if the user has cancelled.
-
-        Returns:
-            Dict with keys ``total``, ``matched``, ``unmatched``, ``skipped``.
-        """
+    def sort_all(self, progress_callback: Callable[[int, int, str], None],
+                 cancelled: Callable[[], bool]) -> dict[str, int]:
         images = collect_event_images(self.events_folder)
         total = len(images)
-
         counts = {"total": total, "matched": 0, "unmatched": 0, "skipped": 0}
-
-        self.logger.info("Starting sort — %d images found", total)
 
         for current, (image_path, event_name) in enumerate(images, start=1):
             if cancelled():
-                self.logger.info("Sort cancelled by user at image %d/%d", current, total)
                 break
-
             progress_callback(current, total, image_path.name)
-
             output_filename = build_output_filename(event_name, image_path.name)
 
             try:
                 rgb_image = self._load_and_resize(image_path)
             except UnidentifiedImageError:
-                self.logger.warning("Corrupted image, moving to _unmatched: %s", image_path.name)
                 safe_copy(image_path, self.output_folder / "_unmatched", output_filename, self.logger)
                 counts["unmatched"] += 1
                 continue
-            except Exception as exc:  # noqa: BLE001
-                self.logger.error("Could not open %s: %s — skipping", image_path.name, exc)
+            except Exception:
                 counts["skipped"] += 1
                 continue
 
             try:
-                face_locations = face_recognition.face_locations(rgb_image)  # HOG — fast
-                if not face_locations:
-                    face_locations = face_recognition.face_locations(rgb_image, model="cnn")  # CNN fallback
-                face_encodings = face_recognition.face_encodings(
-                    rgb_image, face_locations, num_jitters=3, model="large"
-                )
-            except Exception as exc:  # noqa: BLE001
-                self.logger.error("Face detection failed for %s: %s", image_path.name, exc)
+                face_locations = self._detect_faces_with_fallback(rgb_image)
+                face_encodings = face_recognition.face_encodings(rgb_image, face_locations,
+                                                                 num_jitters=3, model="large")
+            except Exception:
                 safe_copy(image_path, self.output_folder / "_unmatched", output_filename, self.logger)
                 counts["unmatched"] += 1
                 continue
 
             if not face_encodings:
-                self.logger.info("No face detected: %s → _unmatched", image_path.name)
                 safe_copy(image_path, self.output_folder / "_unmatched", output_filename, self.logger)
                 counts["unmatched"] += 1
                 continue
 
-            matched_students: set[str] = set()
+            matched_students = set()
             for encoding in face_encodings:
                 match = self._match_face(encoding)
                 if match:
@@ -201,77 +226,64 @@ class PhotoSorter:
 
             if matched_students:
                 for student_name in matched_students:
-                    dest_folder = self.output_folder / student_name
-                    safe_copy(image_path, dest_folder, output_filename, self.logger)
-                    self.logger.info(
-                        "Matched %s → %s", image_path.name, student_name
-                    )
+                    safe_copy(image_path, self.output_folder / student_name, output_filename, self.logger)
                 counts["matched"] += 1
             else:
-                self.logger.info("No match: %s → _unmatched", image_path.name)
                 safe_copy(image_path, self.output_folder / "_unmatched", output_filename, self.logger)
                 counts["unmatched"] += 1
 
-        self.logger.info(
-            "Sort complete — total=%d matched=%d unmatched=%d skipped=%d",
-            counts["total"],
-            counts["matched"],
-            counts["unmatched"],
-            counts["skipped"],
-        )
         return counts
 
-    # ------------------------------------------------------------------
-    # Helpers
-    # ------------------------------------------------------------------
-
     def _load_and_resize(self, image_path: Path) -> np.ndarray:
-        """Open image with Pillow, resize if needed, and return as RGB numpy array.
-
-        Resizing large images to at most MAX_IMAGE_DIMENSION on the longest side
-        dramatically reduces face_locations() time on CPU without meaningfully
-        reducing recognition accuracy.
-
-        Raises:
-            UnidentifiedImageError: If Pillow cannot read the file format.
-        """
         with Image.open(image_path) as img:
             img = img.convert("RGB")
-            width, height = img.size
-            longest = max(width, height)
-            if longest > self.MAX_IMAGE_DIMENSION:
-                scale = self.MAX_IMAGE_DIMENSION / longest
-                new_size = (int(width * scale), int(height * scale))
-                img = img.resize(new_size, Image.LANCZOS)
+            w, h = img.size
+            if max(w, h) > self.MAX_IMAGE_DIMENSION:
+                scale = self.MAX_IMAGE_DIMENSION / max(w, h)
+                img = img.resize((int(w * scale), int(h * scale)), Image.LANCZOS)
+            if self.enhance_images:
+                img = self._enhance_low_light(img, image_path.name)
             return np.array(img)
 
+    def _enhance_low_light(self, img: Image.Image, filename: str) -> Image.Image:
+        mean_brightness = float(np.array(img.convert("L")).mean())
+        if mean_brightness < self.LOW_LIGHT_BRIGHTNESS_THRESHOLD:
+            boost = min(120.0 / max(mean_brightness, 1.0), 4.0)
+            arr = np.array(img).astype(np.float32) / 255.0
+            arr = np.power(arr, 0.6)
+            gamma_img = Image.fromarray((arr * 255).clip(0, 255).astype(np.uint8))
+            # apply the brightness boost computed above (avoid arbitrary 0.5 multiplier)
+            return ImageEnhance.Brightness(gamma_img).enhance(boost)
+        return img
+
+    def _align_face(self, img: Image.Image, filename: str) -> Image.Image:
+        arr = np.array(img)
+        landmarks_list = face_recognition.face_landmarks(arr)
+        if not landmarks_list:
+            return img
+        landmarks = landmarks_list[0]
+        left_pts = landmarks.get("left_eye", [])
+        right_pts = landmarks.get("right_eye", [])
+        if not left_pts or not right_pts:
+            return img
+        lx = sum(p[0] for p in left_pts) / len(left_pts)
+        ly = sum(p[1] for p in left_pts) / len(left_pts)
+        rx = sum(p[0] for p in right_pts) / len(right_pts)
+        ry = sum(p[1] for p in right_pts) / len(right_pts)
+        angle = math.degrees(math.atan2(ry - ly, rx - lx))
+        if abs(angle) < 1.0:
+            return img
+        # use expand=True to avoid cropping after rotation; this preserves facial regions
+        return img.rotate(-angle, resample=Image.BICUBIC, expand=True)
+
     def _match_face(self, encoding: np.ndarray) -> str | None:
-        """Find the closest student encoding within DISTANCE_THRESHOLD.
-
-        Uses face_distance() + argmin rather than compare_faces() booleans so
-        each detected face always matches at most one student — the nearest one.
-
-        Args:
-            encoding: 128-d face encoding from face_recognition.
-
-        Returns:
-            Student name string if a match is found, otherwise None.
-        """
         if not self._student_encodings:
             return None
-
         names = list(self._student_encodings.keys())
-        known_encodings = np.array(list(self._student_encodings.values()))
-
-        distances = face_recognition.face_distance(known_encodings, encoding)
+        known_list = list(self._student_encodings.values())
+        # face_distance expects a list/sequence of 1D encodings
+        distances = face_recognition.face_distance(known_list, encoding)
         best_idx = int(np.argmin(distances))
-        best_distance = distances[best_idx]
-
-        if best_distance <= self.DISTANCE_THRESHOLD:
-            self.logger.debug(
-                "Face matched to %s (distance=%.4f)", names[best_idx], best_distance
-            )
+        if distances[best_idx] <= self.DISTANCE_THRESHOLD:
             return names[best_idx]
-
-        self.logger.debug("No match — best distance=%.4f", best_distance)
         return None

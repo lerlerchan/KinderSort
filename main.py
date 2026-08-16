@@ -1,8 +1,7 @@
 """
 main.py — KinderSort GUI entry point.
 
-Single-window tkinter application that drives the PhotoSorter pipeline with a
-background thread so the UI remains responsive during processing.
+Single-window tkinter application that drives the PhotoSorter pipeline.
 """
 
 import threading
@@ -10,21 +9,33 @@ import time
 import tkinter as tk
 from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
+from datetime import datetime
 
 from sorter import PhotoSorter
 from utils import setup_logger
+
+# Try importing docx for report generation
+try:
+    from docx import Document
+    from docx.shared import Inches, Pt, RGBColor
+    from docx.enum.text import WD_ALIGN_PARAGRAPH
+    from docx.enum.table import WD_TABLE_ALIGNMENT
+    from PIL import Image
+    DOCX_AVAILABLE = True
+except ImportError:
+    DOCX_AVAILABLE = False
 
 
 class KinderSortApp(tk.Tk):
     """Main application window for KinderSort — Student Photo Organiser."""
 
     MIN_WIDTH = 500
-    MIN_HEIGHT = 400
+    MIN_HEIGHT = 480
 
     def __init__(self) -> None:
         """Initialise the window, build all widgets, and configure layout."""
         super().__init__()
-        self.title("KinderSort v1.1 — Student Photo Organiser")
+        self.title("KinderSort Lite v1.1 — Student Photo Organiser")
         self.minsize(self.MIN_WIDTH, self.MIN_HEIGHT)
         self.resizable(True, True)
 
@@ -44,21 +55,27 @@ class KinderSortApp(tk.Tk):
 
         self._build_ui()
 
-    # ------------------------------------------------------------------
-    # Widget construction
-    # ------------------------------------------------------------------
-
     def _build_ui(self) -> None:
         """Build and pack all widgets into the main window."""
         root_frame = tk.Frame(self, padx=16, pady=16)
         root_frame.pack(fill=tk.BOTH, expand=True)
 
         # Title label
+        title_frame = tk.Frame(root_frame)
+        title_frame.pack(fill=tk.X, pady=(0, 12))
+
         tk.Label(
-            root_frame,
-            text="KinderSort — Student Photo Organiser",
+            title_frame,
+            text="KinderSort Lite — Student Photo Organiser",
             font=("Helvetica", 14, "bold"),
-        ).pack(anchor="w", pady=(0, 12))
+        ).pack(side=tk.LEFT)
+
+        tk.Label(
+            title_frame,
+            text="v1.1",
+            font=("Helvetica", 9),
+            fg="#666",
+        ).pack(side=tk.LEFT, padx=(8, 0))
 
         # Folder selector rows
         folders_frame = tk.LabelFrame(root_frame, text="Folders", padx=8, pady=8)
@@ -70,13 +87,13 @@ class KinderSortApp(tk.Tk):
 
         folders_frame.columnconfigure(1, weight=1)
 
-        # Start / Cancel buttons
+        # Button row
         btn_frame = tk.Frame(root_frame)
         btn_frame.pack(fill=tk.X, pady=(0, 12))
 
         self._start_btn = tk.Button(
             btn_frame,
-            text="Start Sorting",
+            text="▶ Start Sorting",
             font=("Helvetica", 11, "bold"),
             bg="#4CAF50",
             fg="white",
@@ -90,7 +107,7 @@ class KinderSortApp(tk.Tk):
 
         self._cancel_btn = tk.Button(
             btn_frame,
-            text="Cancel",
+            text="✖ Cancel",
             font=("Helvetica", 11),
             padx=16,
             pady=8,
@@ -99,44 +116,22 @@ class KinderSortApp(tk.Tk):
         )
         self._cancel_btn.pack(side=tk.LEFT)
 
+        self._report_btn = tk.Button(
+            btn_frame,
+            text="📄 Generate Report",
+            font=("Helvetica", 10),
+            bg="#2196F3",
+            fg="white",
+            activebackground="#1976D2",
+            activeforeground="white",
+            padx=16,
+            pady=8,
+            command=self._on_generate_report,
+        )
+        self._report_btn.pack(side=tk.LEFT, padx=(8, 0))
+
         # Progress section
-        self._build_progress_section(root_frame)
-
-        # Summary box
-        self._build_summary_box(root_frame)
-
-    def _build_folder_row(
-        self,
-        parent: tk.Widget,
-        label_text: str,
-        string_var: tk.StringVar,
-        row: int,
-    ) -> None:
-        """Create a label + read-only entry + browse button row inside parent.
-
-        Args:
-            parent: Container widget (expects grid layout).
-            label_text: Text displayed on the left label.
-            string_var: StringVar bound to the entry widget.
-            row: Grid row index.
-        """
-        tk.Label(parent, text=label_text, anchor="w").grid(
-            row=row, column=0, sticky="w", padx=(0, 8), pady=4
-        )
-
-        entry = tk.Entry(parent, textvariable=string_var, state="readonly", width=40)
-        entry.grid(row=row, column=1, sticky="ew", pady=4)
-
-        btn = tk.Button(
-            parent,
-            text="Browse…",
-            command=lambda v=string_var: self._browse_folder(v),
-        )
-        btn.grid(row=row, column=2, padx=(8, 0), pady=4)
-
-    def _build_progress_section(self, parent: tk.Widget) -> None:
-        """Build the progress bar and status label."""
-        progress_frame = tk.LabelFrame(parent, text="Progress", padx=8, pady=8)
+        progress_frame = tk.LabelFrame(root_frame, text="Progress", padx=8, pady=8)
         progress_frame.pack(fill=tk.X, pady=(0, 12))
 
         self._progress_var = tk.DoubleVar(value=0.0)
@@ -158,9 +153,8 @@ class KinderSortApp(tk.Tk):
         )
         self._timer_label.pack(fill=tk.X)
 
-    def _build_summary_box(self, parent: tk.Widget) -> None:
-        """Build the read-only summary text box shown after completion."""
-        summary_frame = tk.LabelFrame(parent, text="Summary", padx=8, pady=8)
+        # Summary box
+        summary_frame = tk.LabelFrame(root_frame, text="Summary", padx=8, pady=8)
         summary_frame.pack(fill=tk.BOTH, expand=True)
 
         self._summary_text = tk.Text(
@@ -168,48 +162,53 @@ class KinderSortApp(tk.Tk):
         )
         self._summary_text.pack(fill=tk.BOTH, expand=True)
 
-    # ------------------------------------------------------------------
-    # Event handlers
-    # ------------------------------------------------------------------
+    def _build_folder_row(self, parent, label_text, string_var, row):
+        tk.Label(parent, text=label_text, anchor="w").grid(row=row, column=0, sticky="w", padx=(0, 8), pady=4)
+        entry = tk.Entry(parent, textvariable=string_var, state="readonly", width=40)
+        entry.grid(row=row, column=1, sticky="ew", pady=4)
+        btn = tk.Button(parent, text="Browse…", command=lambda v=string_var: self._browse_folder(v))
+        btn.grid(row=row, column=2, padx=(8, 0), pady=4)
 
-    def _browse_folder(self, string_var: tk.StringVar) -> None:
-        """Open a directory chooser and update string_var with the selection."""
+    def _browse_folder(self, string_var):
         folder = filedialog.askdirectory(title="Select folder")
         if folder:
             string_var.set(folder)
 
-    def _on_start(self) -> None:
-        """Validate inputs then launch the worker thread for all heavy work."""
+    def _on_start(self):
         ref = self._reference_var.get().strip()
         events = self._events_var.get().strip()
         output = self._output_var.get().strip()
 
         if not ref or not events or not output:
-            messagebox.showerror(
-                "Missing folders",
-                "Please select all three folders before starting.",
-            )
+            messagebox.showerror("Missing folders", "Please select all three folders before starting.")
             return
 
         ref_path = Path(ref)
         events_path = Path(events)
         output_path = Path(output)
 
-        for path, name in [(ref_path, "Reference"), (events_path, "Events")]:
-            if not path.is_dir():
-                messagebox.showerror("Invalid folder", f"{name} folder does not exist:\n{path}")
-                return
-
-        # Ensure output folder is creatable / writable
-        try:
-            output_path.mkdir(parents=True, exist_ok=True)
-        except OSError as exc:
-            messagebox.showerror("Output folder error", f"Cannot create output folder:\n{exc}")
+        if not ref_path.is_dir() or not events_path.is_dir():
+            messagebox.showerror("Invalid folder", "Reference and Events folders must exist.")
             return
 
-        # Disable start, enable cancel before launching thread
+        try:
+            output_path.mkdir(parents=True, exist_ok=True)
+            # quick writability test
+            test_path = output_path / ".kinderstest"
+            with test_path.open("w") as f:
+                f.write("ok")
+            try:
+                test_path.unlink()
+            except Exception:
+                # best-effort cleanup; ignore if not removable
+                pass
+        except Exception as e:
+            messagebox.showerror("Output folder error", f"Cannot write to output folder: {e}")
+            return
+
         self._start_btn.config(state=tk.DISABLED)
         self._cancel_btn.config(state=tk.NORMAL)
+        self._report_btn.config(state=tk.DISABLED)
         self._cancel_flag.clear()
         self._clear_summary()
         self._progress_var.set(0)
@@ -217,47 +216,30 @@ class KinderSortApp(tk.Tk):
         self._start_ticker()
 
         logger = setup_logger(output_path)
-        sorter = PhotoSorter(ref_path, events_path, output_path, logger)
+        sorter = PhotoSorter(ref_path, events_path, output_path, logger, enhance_images=True, use_cache=True)
 
-        thread = threading.Thread(
-            target=self._run_sorting, args=(sorter,), daemon=True
-        )
+        thread = threading.Thread(target=self._run_sorting, args=(sorter,), daemon=True)
         thread.start()
 
-    def _run_sorting(self, sorter: PhotoSorter) -> None:
-        """Worker thread: load references, then sort all photos."""
+    def _run_sorting(self, sorter):
         try:
-            skipped_names = sorter.load_references(
-                progress_callback=self._on_ref_progress
-            )
-        except Exception as exc:  # noqa: BLE001
-            self.after(0, self._on_error, str(exc))
-            return
+            skipped_names = sorter.load_references(progress_callback=self._on_ref_progress)
+            if skipped_names:
+                self.after(0, self._show_ref_warning, skipped_names)
+            if sorter._student_encodings:
+                summary = sorter.sort_all(progress_callback=self._on_progress, cancelled=self._cancel_flag.is_set)
+                self.after(0, self._on_done, summary)
+            else:
+                self.after(0, self._on_error, "No student faces could be loaded.")
+        except Exception as e:
+            self.after(0, self._on_error, str(e))
 
-        if skipped_names:
-            self.after(0, self._show_ref_warning, skipped_names)
-
-        if not sorter._student_encodings:
-            self.after(0, self._on_error, "No student faces could be loaded. Please check your Reference folder.")
-            return
-
-        try:
-            summary = sorter.sort_all(
-                progress_callback=self._on_progress,
-                cancelled=self._cancel_flag.is_set,
-            )
-            self.after(0, self._on_done, summary)
-        except Exception as exc:  # noqa: BLE001
-            self.after(0, self._on_error, str(exc))
-
-    def _start_ticker(self) -> None:
-        """Start the spinning clock emoji and elapsed timer."""
+    def _start_ticker(self):
         self._sort_start_time = time.monotonic()
         self._spinner_idx = 0
         self._tick()
 
-    def _tick(self) -> None:
-        """Update spinner and elapsed time every 250 ms."""
+    def _tick(self):
         if self._sort_start_time is None:
             return
         elapsed = int(time.monotonic() - self._sort_start_time)
@@ -267,8 +249,7 @@ class KinderSortApp(tk.Tk):
         self._timer_label.config(text=f"{spinner}  {minutes:02d}:{seconds:02d} elapsed")
         self._ticker_id = self.after(250, self._tick)
 
-    def _stop_ticker(self, final_elapsed: int | None = None) -> None:
-        """Stop the spinner and show final elapsed time."""
+    def _stop_ticker(self, final_elapsed=None):
         if self._ticker_id:
             self.after_cancel(self._ticker_id)
             self._ticker_id = None
@@ -279,103 +260,77 @@ class KinderSortApp(tk.Tk):
             self._timer_label.config(text="")
         self._sort_start_time = None
 
-    def _on_ref_progress(self, current: int, total: int, name: str) -> None:
-        """Called from worker thread after each reference photo is encoded."""
+    def _on_ref_progress(self, current, total, name):
         self.after(0, self._set_status, f"Loading references [{current}/{total}]: {name}…")
 
-    def _show_ref_warning(self, skipped_names: list[str]) -> None:
-        """Show warning dialog for reference photos with no detectable face."""
+    def _show_ref_warning(self, skipped_names):
         names_str = "\n".join(f"  • {n}" for n in skipped_names)
         messagebox.showwarning(
             "Reference photos without faces",
-            f"No face was detected in the reference photos for:\n\n{names_str}\n\n"
-            "These students will be skipped during sorting.",
+            f"No face was detected for:\n\n{names_str}\n\nThese students will be skipped."
         )
 
-    def _on_cancel(self) -> None:
-        """Signal the worker thread to stop after the current image."""
+    def _on_cancel(self):
         self._cancel_flag.set()
         self._cancel_btn.config(state=tk.DISABLED)
-        self._set_status("Cancelling… (finishing current image)")
+        self._set_status("Cancelling…")
 
-    # ------------------------------------------------------------------
-    # Cross-thread callbacks (all scheduled via after() from worker)
-    # ------------------------------------------------------------------
-
-    def _on_progress(self, current: int, total: int, filename: str) -> None:
-        """Update progress bar and status label — called from worker thread via after()."""
+    def _on_progress(self, current, total, filename):
         self.after(0, self._apply_progress, current, total, filename)
 
-    def _apply_progress(self, current: int, total: int, filename: str) -> None:
-        """Apply progress update on main thread."""
+    def _apply_progress(self, current, total, filename):
         pct = (current / total * 100) if total else 0
         self._progress_var.set(pct)
         self._set_status(f"[{current}/{total}] {filename}")
 
-    def _on_done(self, summary: dict[str, int]) -> None:
-        """Show summary and re-enable controls after successful completion."""
+    def _on_done(self, summary):
         elapsed = int(time.monotonic() - self._sort_start_time) if self._sort_start_time else None
         self._stop_ticker(final_elapsed=elapsed)
         self._start_btn.config(state=tk.NORMAL)
         self._cancel_btn.config(state=tk.DISABLED)
+        self._report_btn.config(state=tk.NORMAL)
         self._progress_var.set(100)
 
         cancelled = self._cancel_flag.is_set()
         status = "Sorting cancelled." if cancelled else "Sorting complete."
         self._set_status(status)
 
-        lines = [
-            status,
-            "",
-            f"Total images found : {summary['total']}",
-            f"Matched (sorted)   : {summary['matched']}",
-            f"Unmatched          : {summary['unmatched']}",
-            f"Skipped (errors)   : {summary['skipped']}",
-        ]
+        lines = [status, "",
+                 f"Total images found : {summary['total']}",
+                 f"Matched (sorted)   : {summary['matched']}",
+                 f"Unmatched          : {summary['unmatched']}",
+                 f"Skipped (errors)   : {summary['skipped']}"]
         self._write_summary("\n".join(lines))
 
-        if summary["total"] == 0:
-            messagebox.showwarning(
-                "No images found",
-                "No photos were found in the Events folder.\n\n"
-                "Make sure your Events folder contains photos (or sub-folders with photos).\n"
-                "Supported formats: .jpg  .jpeg  .png  .bmp  .webp",
-            )
-
-    def _on_error(self, message: str) -> None:
-        """Show an error dialog and re-enable controls."""
+    def _on_error(self, message):
         self._stop_ticker()
         self._start_btn.config(state=tk.NORMAL)
         self._cancel_btn.config(state=tk.DISABLED)
+        self._report_btn.config(state=tk.NORMAL)
         self._set_status("An error occurred.")
         messagebox.showerror("Unexpected error", message)
 
-    # ------------------------------------------------------------------
-    # Widget helpers
-    # ------------------------------------------------------------------
+    def _on_generate_report(self):
+        from export_matched_photos import main as export_main
+        try:
+            export_main()
+        except Exception as e:
+            messagebox.showerror("Report Error", str(e))
 
-    def _set_status(self, text: str) -> None:
-        """Update the status label text."""
+    def _set_status(self, text):
         self._status_label.config(text=text)
 
-    def _write_summary(self, text: str) -> None:
-        """Write text into the read-only summary box."""
+    def _write_summary(self, text):
         self._summary_text.config(state=tk.NORMAL)
         self._summary_text.delete("1.0", tk.END)
         self._summary_text.insert(tk.END, text)
         self._summary_text.config(state=tk.DISABLED)
 
-    def _clear_summary(self) -> None:
-        """Clear the summary text box."""
+    def _clear_summary(self):
         self._write_summary("")
 
 
-# ---------------------------------------------------------------------------
-# Entry point
-# ---------------------------------------------------------------------------
-
-def main() -> None:
-    """Launch the KinderSort GUI application."""
+def main():
     app = KinderSortApp()
     app.mainloop()
 

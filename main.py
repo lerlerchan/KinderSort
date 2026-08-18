@@ -1,3 +1,21 @@
+import sys
+import os
+
+# ========== CRITICAL FIX FOR PyInstaller ==========
+# Force face_recognition to use the installed models folder
+if getattr(sys, 'frozen', False):
+    # Running as a bundled executable
+    base_path = os.path.dirname(sys.executable)
+    models_path = os.path.join(base_path, 'face_recognition_models')
+    if os.path.exists(models_path):
+        # Override the package path BEFORE any imports
+        import face_recognition_models
+        face_recognition_models.__path__ = [models_path]
+        print(f"[INFO] Models loaded from: {models_path}")
+    else:
+        print(f"[WARNING] Models folder not found at: {models_path}")
+# ==================================================
+
 """
 main.py — KinderSort GUI entry point.
 
@@ -13,6 +31,9 @@ from tkinter import filedialog, messagebox, ttk
 
 from sorter import PhotoSorter
 from utils import setup_logger
+
+# ========== IMPORT SPLASH SCREEN  ==========
+from splash_screen import SplashScreen
 
 
 class KinderSortApp(tk.Tk):
@@ -70,7 +91,7 @@ class KinderSortApp(tk.Tk):
 
         folders_frame.columnconfigure(1, weight=1)
 
-        # Start / Cancel buttons
+        # Start / Cancel / Export Report buttons
         btn_frame = tk.Frame(root_frame)
         btn_frame.pack(fill=tk.X, pady=(0, 12))
 
@@ -99,6 +120,21 @@ class KinderSortApp(tk.Tk):
         )
         self._cancel_btn.pack(side=tk.LEFT)
 
+        # EXPORT REPORT BUTTON
+        self._report_btn = tk.Button(
+            btn_frame,
+            text="Export Report",
+            font=("Helvetica", 11),
+            bg="#2196F3",
+            fg="white",
+            activebackground="#1976D2",
+            activeforeground="white",
+            padx=16,
+            pady=8,
+            command=self._on_export_report,
+        )
+        self._report_btn.pack(side=tk.LEFT, padx=(0, 8))
+
         # Progress section
         self._build_progress_section(root_frame)
 
@@ -112,14 +148,7 @@ class KinderSortApp(tk.Tk):
         string_var: tk.StringVar,
         row: int,
     ) -> None:
-        """Create a label + read-only entry + browse button row inside parent.
-
-        Args:
-            parent: Container widget (expects grid layout).
-            label_text: Text displayed on the left label.
-            string_var: StringVar bound to the entry widget.
-            row: Grid row index.
-        """
+        """Create a label + read-only entry + browse button row inside parent."""
         tk.Label(parent, text=label_text, anchor="w").grid(
             row=row, column=0, sticky="w", padx=(0, 8), pady=4
         )
@@ -299,11 +328,31 @@ class KinderSortApp(tk.Tk):
         self._set_status("Cancelling… (finishing current image)")
 
     # ------------------------------------------------------------------
-    # Cross-thread callbacks (all scheduled via after() from worker)
+    # EXPORT REPORT
+    # ------------------------------------------------------------------
+
+    def _on_export_report(self) -> None:
+        """Export a Word report with all sorted student photos."""
+        output = self._output_var.get().strip()
+        if not output:
+            messagebox.showerror("Error", "Please select an Output folder first.")
+            return
+
+        try:
+            from generate_report import generate_student_report
+            report_path = Path(output) / "Student_Report.docx"
+            generate_student_report(output, str(report_path), parent_window=self)
+        except ImportError:
+            messagebox.showerror("Error", "Report generator not found.")
+        except Exception as e:
+            messagebox.showerror("Error", f"Failed to generate report: {e}")
+
+    # ------------------------------------------------------------------
+    # Cross-thread callbacks
     # ------------------------------------------------------------------
 
     def _on_progress(self, current: int, total: int, filename: str) -> None:
-        """Update progress bar and status label — called from worker thread via after()."""
+        """Update progress bar and status label."""
         self.after(0, self._apply_progress, current, total, filename)
 
     def _apply_progress(self, current: int, total: int, filename: str) -> None:
@@ -376,6 +425,15 @@ class KinderSortApp(tk.Tk):
 
 def main() -> None:
     """Launch the KinderSort GUI application."""
+    # === SPLASH SCREEN ===
+    splash = SplashScreen()
+    splash.update_status("Initializing...")
+    time.sleep(1)
+    splash.update_status("Loading face recognition models...")
+    time.sleep(1)
+    splash.close()
+    # === END SPLASH SCREEN ===
+
     app = KinderSortApp()
     app.mainloop()
 

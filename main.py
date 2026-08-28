@@ -14,6 +14,24 @@ from tkinter import filedialog, messagebox, ttk
 from sorter import PhotoSorter
 from utils import setup_logger
 
+# Check if python-docx is installed (for generating student Word reports)
+try:
+    from docx import Document
+    from docx.shared import Inches, Pt
+    from docx.enum.text import WD_ALIGN_PARAGRAPH
+    HAS_DOCX = True
+except ImportError:
+    HAS_DOCX = False
+
+# ---------------------------------------------------------------------------
+# NVIDIA API Integration and Initialization Configuration
+# ---------------------------------------------------------------------------
+BUILTIN_NVIDIA_API_KEY = os.environ.get(
+    "NVIDIA_API_KEY", 
+    "YOUR_API_KEY"  
+)
+
+
 
 class KinderSortApp(tk.Tk):
     """Main application window for KinderSort — Student Photo Organiser."""
@@ -97,7 +115,18 @@ class KinderSortApp(tk.Tk):
             state=tk.DISABLED,
             command=self._on_cancel,
         )
-        self._cancel_btn.pack(side=tk.LEFT)
+        self._cancel_btn.pack(side=tk.LEFT, padx=(0, 8))
+
+        # Optional Feature Button: Export Word Report
+        self._export_btn = tk.Button(
+            btn_frame,
+            text="Generate Roster Docx",
+            font=("Helvetica", 10),
+            padx=10,
+            pady=8,
+            command=self._on_export_docx,
+        )
+        self._export_btn.pack(side=tk.RIGHT)
 
         # Progress section
         self._build_progress_section(root_frame)
@@ -180,9 +209,9 @@ class KinderSortApp(tk.Tk):
 
     def _on_start(self) -> None:
         """Validate inputs then launch the worker thread for all heavy work."""
-        ref = self._reference_var.get().strip()
-        events = self._events_var.get().strip()
-        output = self._output_var.get().strip()
+        ref = self._reference_var.get().strip().strip('"')
+        events = self._events_var.get().strip().strip('"')
+        output = self._output_var.get().strip().strip('"')
 
         if not ref or not events or not output:
             messagebox.showerror(
@@ -217,7 +246,14 @@ class KinderSortApp(tk.Tk):
         self._start_ticker()
 
         logger = setup_logger(output_path)
-        sorter = PhotoSorter(ref_path, events_path, output_path, logger)
+
+        sorter = PhotoSorter(
+            ref_path, 
+            events_path, 
+            output_path, 
+            logger, 
+            api_key=BUILTIN_NVIDIA_API_KEY
+        )
 
         thread = threading.Thread(
             target=self._run_sorting, args=(sorter,), daemon=True
@@ -230,6 +266,12 @@ class KinderSortApp(tk.Tk):
             skipped_names = sorter.load_references(
                 progress_callback=self._on_ref_progress
             )
+        except FileNotFoundError as exc:
+            self.after(0, self._on_error, f"File path error: {exc}")
+            return
+        except PermissionError as exc:
+            self.after(0, self._on_error, f"Permission denied accessing folder: {exc}")
+            return
         except Exception as exc:  # noqa: BLE001
             self.after(0, self._on_error, str(exc))
             return
@@ -247,8 +289,15 @@ class KinderSortApp(tk.Tk):
                 cancelled=self._cancel_flag.is_set,
             )
             self.after(0, self._on_done, summary)
+        except FileNotFoundError as exc:
+            self.after(0, self._on_error, f"File path error: {exc}")
+            return
+        except PermissionError as exc:
+            self.after(0, self._on_error, f"Permission denied accessing folder: {exc}")
+            return
         except Exception as exc:  # noqa: BLE001
             self.after(0, self._on_error, str(exc))
+            return
 
     def _start_ticker(self) -> None:
         """Start the spinning clock emoji and elapsed timer."""
@@ -298,6 +347,76 @@ class KinderSortApp(tk.Tk):
         self._cancel_btn.config(state=tk.DISABLED)
         self._set_status("Cancelling… (finishing current image)")
 
+     # ------------------------------------------------------------------
+    # Optional Feature: Word Grid Report Generator
+    # ------------------------------------------------------------------
+    def _on_export_docx(self) -> None:
+        """Generate a 1-page Word document grid for reference photos."""
+        if not HAS_DOCX:
+            messagebox.showerror(
+                "Missing Library",
+                "python-docx is required for this feature.\nPlease run: pip install python-docx",
+            )
+            return
+
+        ref_path = Path(ref)
+        out_path = Path(out_dir) if out_dir else ref_path
+        out_path.mkdir(parents=True, exist_ok=True)
+
+        if not ref_dir:
+            messagebox.showerror("Error", "Please select a Reference Photos folder first.")
+            return
+
+        ref_path = Path(ref_dir)
+        out_path = Path(out_dir) if out_dir else ref_path
+
+        valid_exts = {".jpg", ".jpeg", ".png", ".bmp", ".webp"}
+        images = [p for p in ref_path.iterdir() if p.suffix.lower() in valid_exts]
+
+        if not images:
+            messagebox.showwarning("No Images", "No reference images found in the selected folder.")
+            return
+
+        try:
+            doc = Document()
+            # Set margins to 0.5 inch for 1-page fit
+            sections = doc.sections
+            for section in sections:
+                section.top_margin = Inches(0.5)
+                section.bottom_margin = Inches(0.5)
+                section.left_margin = Inches(0.5)
+                section.right_margin = Inches(0.5)
+
+            title = doc.add_heading("Kindergarten Student Roster Grid", level=1)
+            title.alignment = WD_ALIGN_PARAGRAPH.CENTER
+
+            # Create a 3-column table
+            cols = 3
+            rows = (len(images) + cols - 1) // cols
+            table = doc.add_table(rows=rows, cols=cols)
+            table.autofit = False
+
+            for idx, img_p in enumerate(sorted(images)):
+                r = idx // cols
+                c = idx % cols
+                cell = table.cell(r, c)
+                
+                # Add image & student name
+                p = cell.paragraphs[0]
+                p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+                run = p.add_run()
+                run.add_picture(str(img_p), width=Inches(1.8))
+                
+                name_p = cell.add_paragraph(img_p.stem)
+                name_p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+
+            save_file = out_path / "Student_Roster_Grid.docx"
+            doc.save(str(save_file))
+            messagebox.showinfo("Success", f"Word Report exported to:\n{save_file}")
+
+        except Exception as exc:
+            messagebox.showerror("Report Error", f"Failed to generate Word report:\n{exc}")
+
     # ------------------------------------------------------------------
     # Cross-thread callbacks (all scheduled via after() from worker)
     # ------------------------------------------------------------------
@@ -333,6 +452,10 @@ class KinderSortApp(tk.Tk):
             f"Skipped (errors)   : {summary['skipped']}",
         ]
         self._write_summary("\n".join(lines))
+
+        #Write runtime summary to the log
+        logger = setup_logger(Path(self._output_var.get()))
+        logger.info(f"Sorting session finished. Total: {summary['total']}, Matched: {summary['matched']}, Unmatched: {summary['unmatched']}")
 
         if summary["total"] == 0:
             messagebox.showwarning(

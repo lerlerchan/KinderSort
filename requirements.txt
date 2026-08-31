@@ -1,4 +1,14 @@
-face_recognition==1.3.0
-dlib==19.24.2
+# Core dependencies (always needed)
 Pillow==10.3.0
 numpy==1.26.4
+opencv-python-headless==4.9.0.80
+cryptography>=42.0.0  # AES-256-GCM encryption for the on-disk encoding cache
+
+# Optional: for higher accuracy with dlib backend (used by evaluator.py
+# and the original main.py). Without these, KinderSort Lite still works —
+# it falls back to an OpenCV-based detector automatically.
+# On Windows, installing dlib from source can fail with a locale/encoding
+# error unrelated to missing compilers — see README.md "Windows: installing
+# dlib / face_recognition" for the working install sequence.
+# face-recognition==1.3.0
+# dlib-bin==20.0.1          # precompiled wheel — avoids the Windows build issue

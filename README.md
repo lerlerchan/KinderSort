@@ -128,13 +128,52 @@ Output/
 
 ---
 
+## Accuracy Testing
+
+The table below reports measured results on a real-photo test set (public-figure images, 2 identities, 7 event photos) using the OpenCV LBPH backend. No synthetic data was used for these figures.
+
+| Metric | Result |
+|---|---|
+| Test dataset | Real photos — 2 identities, 7 event photos |
+| Faces correctly matched | 7 / 7 (100%) |
+| Unmatched | 0 |
+| Average match margin | 90.2% |
+| Backend | OpenCV (LBPH feature encoding, CPU-only) |
+
+Note: the OpenCV fallback backend detects faces reliably, but distinguishing between similar-looking people is limited without the optional `dlib` backend. See [Human Review and Recognition Limitations](#human-review-and-recognition-limitations).
+
+## Performance Testing
+
+Measured on a Windows 11 machine (Intel Core i5, 8 GB RAM) with no GPU acceleration — CPU only.
+
+| Metric | Result |
+|---|---|
+| Reference load | 0.22 s (2 reference photos) |
+| Sorting throughput | 8.0 images / second |
+| Peak RAM | ~110 MB |
+| GPU required | No |
+
+Reproduce locally:
+
+```bash
+python -m venv .venv
+.venv\Scripts\activate
+pip install -r requirements.txt
+python evaluator.py <reference_folder> <events_folder> --ground-truth ground_truth.json
+```
+
+A reproducible evaluation dataset and benchmark results are provided under the `evidence/` folder.
+
+---
+
 ## Developer Setup
 
 ```bash
 python -m venv .venv
 .venv\Scripts\activate
 pip install -r requirements.txt
-python main.py
+python main_lite.py   # Enhanced version (recommended) — CLAHE, ensemble detection, Fast Mode, encrypted cache
+# python main.py      # Original baseline version (dlib-only, no enhancements)
 ```
 
 Build Windows executable:
@@ -143,3 +182,44 @@ Build Windows executable:
 pyinstaller --onefile --windowed --name "KinderSort" main.py
 # Output: dist/KinderSort.exe
 ```
+
+### Windows: installing dlib / face_recognition
+
+The optional `face_recognition` + `dlib` backend (used for the baseline
+comparison in `evaluator.py`) can fail to build from source on Windows with
+`UnicodeDecodeError: 'cp950' codec can't decode byte...` — this is a locale
+encoding bug in dlib's setup script, not a missing compiler. Fix:
+
+```bash
+pip install dlib-bin              # precompiled wheel, skips the broken build step
+pip install face_recognition --no-deps
+pip install Click face-recognition-models
+pip install "setuptools<81"       # face_recognition_models needs pkg_resources,
+                                   # removed in setuptools 81+
+```
+
+Without this, KinderSort Lite still runs fine — it automatically falls back
+to an OpenCV-based detector (see `face_engine.py`) with somewhat lower
+accuracy. dlib is only required for the baseline comparison in
+`evaluator.py` and the original `main.py`.
+
+## Human Review and Recognition Limitations
+
+KinderSort Lite assists teachers in organising event photographs, but face-recognition results may contain incorrect or missed matches. Teachers must review all sorted folders before photographs are distributed to parents or guardians.
+
+The displayed match score is a normalised facial-distance indicator. It is not a calibrated probability and does not guarantee that the identified student is correct. A higher score only indicates that the detected face is more similar to the selected reference image.
+
+### Recommended Review Procedure
+
+1. Review every sorted student folder before distributing photographs.
+2. Pay additional attention to photographs with low match scores.
+3. Check the `_unmatched` folder and sort those photographs manually.
+4. Confirm that group photographs were copied only to the correct student folders.
+5. Replace unclear reference images with well-lit, front-facing photographs.
+6. Obtain appropriate parental or guardian consent before processing children's photographs.
+
+### Privacy Notice
+
+Photograph recognition and sorting are performed locally on the user's computer. Student photographs and facial encodings are not uploaded to an external face-recognition service. If an optional model is not included with the installer, a one-time model download may be required.
+
+Users are responsible for protecting the output folders, deleting information when it is no longer required, and following their school's privacy and data-retention procedures.

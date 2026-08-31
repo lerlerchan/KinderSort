@@ -191,4 +191,24 @@ which event a photo came from.
 
 ---
 
+## AI Enhancement Options (KinderSort Lite)
+
+The Lite version adds a few extra checkboxes above the Start button. You can
+leave these on their defaults for most schools, but here's what each does:
+
+| Option | What it does | When to change it |
+|---|---|---|
+| **Image Preprocessing** | Evens out lighting (CLAHE) before matching faces | Leave on — helps in gyms, halls, and outdoor events with uneven light |
+| **Ensemble Detection** | Uses two detection passes for higher recall | Leave on for accuracy; turn off if sorting feels slow |
+| **Cache Encodings** | Remembers faces between runs so re-sorting is faster | Leave on unless students' reference photos change often |
+| **Fast Mode** | Skips the slower second detection pass entirely | Turn **on** for large batches (500+ photos) on an older/slower school laptop, or when you need results quickly and can manually double-check the `_review` folder afterwards |
+
+**A note on privacy:** when "Cache Encodings" is on, KinderSort stores each
+student's face data in an encrypted file on your computer (AES-256, the same
+standard used for online banking) so re-running a sort is faster. Nothing is
+ever sent anywhere — it stays on the school computer, and clicking "Clear
+Cache" in the app deletes it completely.
+
+---
+
 *KinderSort — Student Photo Organiser | Runs fully offline, no internet required*

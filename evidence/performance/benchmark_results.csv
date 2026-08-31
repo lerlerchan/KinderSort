@@ -1,0 +1,7 @@
+Metric,Original,KinderSort Lite,Notes
+Total Images,N/A,15,Original requires dlib (MSVC build tools not available)
+Processing Time (s),N/A,1.1,Measured on i5-1135G7 / 8GB RAM / Win 11
+Peak RAM (MB),N/A,107,CPU-only OpenCV backend
+Throughput (img/min),N/A,841.8,Synthetic test data
+Matched,N/A,0,Placeholder images only
+Unmatched,N/A,15,No real face photos available

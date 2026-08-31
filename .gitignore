@@ -13,3 +13,7 @@ WinInstaller/
 *.exe
 /Issues
 .claude/worktrees/vigorous-hellman/
+
+# Synthetic test faces (not committed)
+test_faces/
+test_1000_faces/

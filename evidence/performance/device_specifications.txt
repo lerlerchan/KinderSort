@@ -1,0 +1,28 @@
+Device Specifications — KinderSort Lite Evaluation
+====================================================
+Date: 14 August 2026
+Project: CSIS3083 Ethics in Computing
+
+Test Machine 1 (Development):
+  OS: Windows 11 Home 64-bit (Build 22631)
+  CPU: Intel Core i5-1135G7 @ 2.40GHz (4 cores, 8 threads)
+  RAM: 8 GB DDR4-3200
+  GPU: Intel Iris Xe (integrated, not used for inference)
+  Storage: 512 GB NVMe SSD
+  Python: 3.11.15
+  OpenCV: 4.9.0
+  dlib: Not installed (CPU-only OpenCV backend)
+
+Test Machine 2 (Low-Resource):
+  OS: Windows 10 Home 64-bit (Build 19045)
+  CPU: Intel Celeron N4020 @ 1.10GHz (2 cores)
+  RAM: 4 GB DDR4
+  GPU: Intel UHD Graphics 600 (integrated)
+  Storage: 128 GB eMMC
+  Python: None (tested via .exe installer only)
+
+Evaluation Conditions:
+  - All tests run with network disconnected
+  - No GPU acceleration used
+  - CPU-only inference throughout
+  - Peak RAM measured via Windows Task Manager

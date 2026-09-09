@@ -31,49 +31,39 @@ class PhotoSorter:
         summary = sorter.sort_all(progress_cb, cancelled_cb)
     """
 
-    DISTANCE_THRESHOLD = 0.55
+    DISTANCE_THRESHOLD = 0.455
     """Maximum face distance to consider a match (lower = stricter)."""
 
-    MAX_IMAGE_DIMENSION = 1000
+   MAX_IMAGE_DIMENSION = 1200
     """Longest side in pixels after resizing for face detection (performance)."""
 
-    def __init__(
+   def _init_(
         self,
         reference_folder: Path,
         events_folder: Path,
         output_folder: Path,
         logger: logging.Logger,
+        api_key: str = "",  # Preserved for interface compatibility
     ) -> None:
-        """Store folder paths and logger; initialise empty encoding dict."""
         self.reference_folder = reference_folder
         self.events_folder = events_folder
         self.output_folder = output_folder
         self.logger = logger
+
+        # Stores 128-dimensional face embedding vectors for students: {"Ljj": np.array([...]), ...}
         self._student_encodings: dict[str, np.ndarray] = {}
+        self._student_names: list[str] = []
 
     # ------------------------------------------------------------------
     # Reference loading
     # ------------------------------------------------------------------
 
-    def load_references(
+        def load_references(
         self,
         progress_callback: Callable[[int, int, str], None] | None = None,
     ) -> list[str]:
-        """Encode every reference photo and store by student name.
-
-        Iterates over image files in reference_folder.  The student name is the
-        filename stem (e.g. ``Ali.jpg`` → ``"Ali"``).
-
-        Args:
-            progress_callback: Optional callable with ``(current, total, name)``
-                called after each student is processed so the GUI can update.
-
-        Returns:
-            List of student names whose reference photo had no detectable face.
-            Callers should show a warning for each name in this list.
-        """
+        """Stage 1: Load reference photos and extract high-precision face embeddings using Multi-Jitter."""
         no_face_names: list[str] = []
-
         reference_images = sorted(
             p for p in self.reference_folder.iterdir() if is_image_file(p)
         )
@@ -87,71 +77,52 @@ class PhotoSorter:
             student_name = ref_path.stem
             if progress_callback:
                 progress_callback(current, total, student_name)
-            try:
-                image = face_recognition.load_image_file(str(ref_path))
-                locations = face_recognition.face_locations(image, model="cnn")
-                encodings = face_recognition.face_encodings(
-                    image, known_face_locations=locations, num_jitters=10, model="large"
-                )
 
-                if not encodings:
-                    self.logger.warning(
-                        "No face detected in reference photo for %s (%s)",
-                        student_name,
-                        ref_path.name,
-                    )
+            try:
+                rgb_image = self._load_and_resize(ref_path)
+
+                # Primary detection using fast HOG; fallback to CNN if no face is detected
+                locations = face_recognition.face_locations(rgb_image, model="hog")
+                if not locations:
+                    locations = face_recognition.face_locations(rgb_image, model="cnn")
+
+                if not locations:
+                    self.logger.warning("No face detected in reference photo for %s", student_name)
                     no_face_names.append(student_name)
                     continue
 
-                if len(encodings) > 1:
-                    self.logger.warning(
-                        "Multiple faces in reference photo for %s — using first face only",
-                        student_name,
-                    )
-
-                self._student_encodings[student_name] = encodings[0]
-                self.logger.info("Loaded reference for %s", student_name)
-
-            except Exception as exc:  # noqa: BLE001
-                self.logger.error(
-                    "Could not read reference photo %s: %s", ref_path.name, exc
+                # Extract face embeddings; num_jitters=5 computes an averaged, robust embedding vector
+                encodings = face_recognition.face_encodings(
+                    rgb_image, known_face_locations=locations, num_jitters=5
                 )
 
-        self.logger.info(
-            "Loaded %d student reference(s)", len(self._student_encodings)
-        )
+                if encodings:
+                    self._student_encodings[student_name] = encodings[0]
+                    self._student_names.append(student_name)
+                    self.logger.info("Loaded & Profiled 128D Embedding for: %s", student_name)
+                else:
+                    no_face_names.append(student_name)
+
+            except Exception as exc:
+                self.logger.error("Could not process reference %s: %s", ref_path.name, exc)
+                no_face_names.append(student_name)
+
         return no_face_names
 
     # ------------------------------------------------------------------
     # Main sort loop
     # ------------------------------------------------------------------
-
-    def sort_all(
+ def sort_all(
         self,
         progress_callback: Callable[[int, int, str], None],
         cancelled: Callable[[], bool],
     ) -> dict[str, int]:
-        """Sort all event photos into per-student output subfolders.
-
-        Processes one image at a time to keep RAM usage low.  For each detected
-        face in a photo the nearest student is identified; the photo is copied
-        to every matched student folder (allowing group shots).  Photos with no
-        match or no face are copied to ``_unmatched/``.
-
-        Args:
-            progress_callback: Called with ``(current, total, filename)`` after
-                each image so the GUI can update its progress bar.
-            cancelled: Zero-arg callable; returns True if the user has cancelled.
-
-        Returns:
-            Dict with keys ``total``, ``matched``, ``unmatched``, ``skipped``.
-        """
+        """Stage 2: High-precision pipeline for comparison and classification."""
         images = collect_event_images(self.events_folder)
         total = len(images)
-
         counts = {"total": total, "matched": 0, "unmatched": 0, "skipped": 0}
 
-        self.logger.info("Starting sort — %d images found", total)
+        self.logger.info("Starting High-Precision Face Sorting - %d images found", total)
 
         for current, (image_path, event_name) in enumerate(images, start=1):
             if cancelled():
@@ -159,7 +130,6 @@ class PhotoSorter:
                 break
 
             progress_callback(current, total, image_path.name)
-
             output_filename = build_output_filename(event_name, image_path.name)
 
             try:
@@ -169,96 +139,99 @@ class PhotoSorter:
                 safe_copy(image_path, self.output_folder / "_unmatched", output_filename, self.logger)
                 counts["unmatched"] += 1
                 continue
-            except Exception as exc:  # noqa: BLE001
-                self.logger.error("Could not open %s: %s — skipping", image_path.name, exc)
+            except Exception as exc:
+                self.logger.error("Could not open %s: %s - skipping", image_path.name, exc)
                 counts["skipped"] += 1
                 continue
 
             try:
-                face_locations = face_recognition.face_locations(rgb_image)  # HOG — fast
+                # 1. Detect face locations (HOG fast detection with CNN fallback to prevent missed faces)
+                face_locations = face_recognition.face_locations(rgb_image, model="hog")
                 if not face_locations:
-                    face_locations = face_recognition.face_locations(rgb_image, model="cnn")  # CNN fallback
-                face_encodings = face_recognition.face_encodings(
-                    rgb_image, face_locations, num_jitters=3, model="large"
-                )
-            except Exception as exc:  # noqa: BLE001
+                    face_locations = face_recognition.face_locations(rgb_image, model="cnn")
+
+                # 2. Extract 128D embedding vectors for all detected faces in the event photo
+                face_encodings = face_recognition.face_encodings(rgb_image, face_locations)
+
+                if not face_encodings:
+                    self.logger.info("No face detected in %s -> _unmatched", image_path.name)
+                    safe_copy(image_path, self.output_folder / "_unmatched", output_filename, self.logger)
+                    counts["unmatched"] += 1
+                    continue
+
+                matched_students: set[str] = set()
+                # 3. Compare Euclidean distance against reference embeddings
+                for encoding in face_encodings:
+                    match = self._match_face_embedding(encoding)
+                    if match:
+                        matched_students.add(match)
+
+                # 4. Copy matched files to respective output directories
+                if matched_students:
+                    for student_name in matched_students:
+                        dest_folder = self.output_folder / student_name
+                        safe_copy(image_path, dest_folder, output_filename, self.logger)
+                        self.logger.info("Matched %s -> %s", image_path.name, student_name)
+                    counts["matched"] += 1
+                else:
+                    self.logger.info("No match (distance > %.2f): %s -> _unmatched", 
+                                     self.DISTANCE_THRESHOLD, image_path.name)
+                    safe_copy(image_path, self.output_folder / "_unmatched", output_filename, self.logger)
+                    counts["unmatched"] += 1
+
+            except Exception as exc:
                 self.logger.error("Face detection failed for %s: %s", image_path.name, exc)
                 safe_copy(image_path, self.output_folder / "_unmatched", output_filename, self.logger)
                 counts["unmatched"] += 1
-                continue
 
-            if not face_encodings:
-                self.logger.info("No face detected: %s → _unmatched", image_path.name)
-                safe_copy(image_path, self.output_folder / "_unmatched", output_filename, self.logger)
-                counts["unmatched"] += 1
-                continue
+            finally:
+                # Explicit garbage collection to prevent memory leaks
+                if 'rgb_image' in locals():
+                    del rgb_image
+                gc.collect()
 
-            matched_students: set[str] = set()
-            for encoding in face_encodings:
-                match = self._match_face(encoding)
-                if match:
-                    matched_students.add(match)
-
-            if matched_students:
-                for student_name in matched_students:
-                    dest_folder = self.output_folder / student_name
-                    safe_copy(image_path, dest_folder, output_filename, self.logger)
-                    self.logger.info(
-                        "Matched %s → %s", image_path.name, student_name
-                    )
-                counts["matched"] += 1
-            else:
-                self.logger.info("No match: %s → _unmatched", image_path.name)
-                safe_copy(image_path, self.output_folder / "_unmatched", output_filename, self.logger)
-                counts["unmatched"] += 1
-
-        self.logger.info(
-            "Sort complete — total=%d matched=%d unmatched=%d skipped=%d",
-            counts["total"],
-            counts["matched"],
-            counts["unmatched"],
-            counts["skipped"],
-        )
         return counts
 
     # ------------------------------------------------------------------
     # Helpers
     # ------------------------------------------------------------------
 
-    def _load_and_resize(self, image_path: Path) -> np.ndarray:
-        """Open image with Pillow, resize if needed, and return as RGB numpy array.
-
-        Resizing large images to at most MAX_IMAGE_DIMENSION on the longest side
-        dramatically reduces face_locations() time on CPU without meaningfully
-        reducing recognition accuracy.
-
-        Raises:
-            UnidentifiedImageError: If Pillow cannot read the file format.
-        """
+   def _load_and_resize(self, image_path: Path) -> np.ndarray:
+        """Reads an image, applies low-resource preprocessing, and returns a RGB NumPy array."""
         with Image.open(image_path) as img:
             img = img.convert("RGB")
             width, height = img.size
             longest = max(width, height)
+
             if longest > self.MAX_IMAGE_DIMENSION:
                 scale = self.MAX_IMAGE_DIMENSION / longest
                 new_size = (int(width * scale), int(height * scale))
                 img = img.resize(new_size, Image.LANCZOS)
+
             return np.array(img)
-
-    def _match_face(self, encoding: np.ndarray) -> str | None:
-        """Find the closest student encoding within DISTANCE_THRESHOLD.
-
-        Uses face_distance() + argmin rather than compare_faces() booleans so
-        each detected face always matches at most one student — the nearest one.
-
-        Args:
-            encoding: 128-d face encoding from face_recognition.
-
-        Returns:
-            Student name string if a match is found, otherwise None.
-        """
+    def _match_face_embedding(self, encoding: np.ndarray) -> str | None:
+        """Calculates Euclidean distance and identifies the matching student based on threshold."""
         if not self._student_encodings:
             return None
+
+        names = list(self._student_encodings.keys())
+        known_encodings = np.array(list(self._student_encodings.values()))
+
+        # Compute Euclidean distance vector
+        distances = face_recognition.face_distance(known_encodings, encoding)
+        best_idx = int(np.argmin(distances))
+        best_distance = distances[best_idx]
+
+        self.logger.debug(
+            "Closest match: %s with distance: %.4f (Threshold: %.2f)",
+            names[best_idx], best_distance, self.DISTANCE_THRESHOLD
+        )
+
+        # Classified as the same person if distance is below threshold
+        if best_distance <= self.DISTANCE_THRESHOLD:
+            return names[best_idx]
+
+        return None
 
         names = list(self._student_encodings.keys())
         known_encodings = np.array(list(self._student_encodings.values()))

@@ -10,6 +10,34 @@ from pathlib import Path
 
 SUPPORTED_EXTENSIONS = {".jpg", ".jpeg", ".png", ".bmp", ".webp"}
 
+def validate_folder_separation(
+    reference_folder: Path,
+    events_folder: Path,
+    output_folder: Path,
+) -> None:
+    """
+    Validate that the output folder does not overlap with
+    the reference or events folders.
+
+    Raises:
+        ValueError: If the output folder overlaps with an input folder.
+    """
+    output = output_folder.resolve()
+
+    for name, source in (
+        ("Reference", reference_folder),
+        ("Events", events_folder),
+    ):
+        resolved_source = source.resolve()
+
+        if (
+            output == resolved_source
+            or output in resolved_source.parents
+            or resolved_source in output.parents
+        ):
+            raise ValueError(
+                f"Output folder must be separate from {name} folder."
+            )
 
 def setup_logger(output_folder: Path) -> logging.Logger:
     """Create and return a logger that writes to output_folder/kindersort_log.txt.

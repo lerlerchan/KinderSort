@@ -74,39 +74,37 @@ def setup_logger(output_folder: Path) -> logging.Logger:
 def is_image_file(path: Path) -> bool:
     """Return True if path has a supported image extension (case-insensitive)."""
     return path.suffix.lower() in SUPPORTED_EXTENSIONS
-
-
+    
 def collect_event_images(events_folder: Path) -> list[tuple[Path, str]]:
-    """Walk immediate subfolders of events_folder and collect image paths.
+    """Collect images from the Events root and its subfolders.
 
-    Returns a list of (image_path, event_name) tuples where event_name is the
-    name of the immediate subfolder containing the image.
+    Images directly inside events_folder use the root folder name
+    as their event name.
 
-    If no images are found in subfolders (e.g. the user selected an event folder
-    directly rather than its parent), falls back to scanning images placed directly
-    in events_folder root, using the folder name as the event name.
+    Images inside subfolders use the name of their immediate
+    child folder under events_folder as their event name.
+
+    Both root-level and nested images are always collected.
+    Each image is included only once.
     """
     results: list[tuple[Path, str]] = []
 
     for item in sorted(events_folder.iterdir()):
-        if not item.is_dir():
-            continue
-        event_name = item.name
-        for image_path in sorted(item.rglob("*")):
-            if image_path.is_file() and is_image_file(image_path):
-                results.append((image_path, event_name))
 
-    # Fallback: if no images found in subfolders, scan root of events_folder directly.
-    # This handles the case where the user selects a single event folder (flat structure).
-    if not results:
-        event_name = events_folder.name
-        for image_path in sorted(events_folder.iterdir()):
-            if image_path.is_file() and is_image_file(image_path):
-                results.append((image_path, event_name))
+        # Collect images directly inside the Events root.
+        if item.is_file() and is_image_file(item):
+            results.append((item, events_folder.name))
+
+        # Collect images inside event subfolders.
+        elif item.is_dir():
+            event_name = item.name
+
+            for image_path in sorted(item.rglob("*")):
+                if image_path.is_file() and is_image_file(image_path):
+                    results.append((image_path, event_name))
 
     return results
-
-
+    
 def build_output_filename(event_name: str, original_filename: str) -> str:
     """Build a destination filename prefixed with the event folder name.
 

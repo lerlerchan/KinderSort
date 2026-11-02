@@ -12,8 +12,7 @@ from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
 
 from sorter import PhotoSorter
-from utils import setup_logger
-
+from utils import setup_logger, validate_folder_separation
 
 class KinderSortApp(tk.Tk):
     """Main application window for KinderSort — Student Photo Organiser."""
@@ -200,6 +199,26 @@ class KinderSortApp(tk.Tk):
                 messagebox.showerror("Invalid folder", f"{name} folder does not exist:\n{path}")
                 return
 
+        # Prevent input and output folder conflicts
+        try:
+            validate_folder_separation(
+                ref_path,
+                events_path,
+                output_path,
+            )
+        except ValueError as exc:
+            messagebox.showerror(
+                "Invalid folder configuration",
+                str(exc),
+            )
+            return
+        except OSError as exc:
+            messagebox.showerror(
+                "Folder validation error",
+                f"Cannot check folder paths:\n{exc}",
+            )
+            return
+            
         # Ensure output folder is creatable / writable
         try:
             output_path.mkdir(parents=True, exist_ok=True)

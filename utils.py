@@ -5,7 +5,9 @@ No face_recognition dependency — safe to import without dlib installed.
 """
 
 import logging
+import os
 import shutil
+import stat
 from pathlib import Path
 
 SUPPORTED_EXTENSIONS = {".jpg", ".jpeg", ".png", ".bmp", ".webp"}
@@ -120,8 +122,23 @@ def build_output_filename(event_name: str, original_filename: str) -> str:
     return f"{event_name}__{original_filename}"
 
 
+def _reject_linked_output(folder: Path) -> None:
+    """Reject links in the output path, including Windows reparse points."""
+    absolute = folder.absolute()
+    for directory in reversed((absolute, *absolute.parents)):
+        try:
+            info = directory.lstat()
+        except FileNotFoundError:
+            continue
+        if stat.S_ISLNK(info.st_mode) or (
+            getattr(info, "st_file_attributes", 0)
+            & getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0x400)
+        ):
+            raise ValueError(f"Output directory must not contain links: {directory}")
+
+
 def safe_copy(src: Path, dest_folder: Path, filename: str, logger: logging.Logger) -> Path:
-    """Copy src to dest_folder/filename using shutil.copy2 (preserves metadata).
+    """Copy src through an exclusively created destination, preserving metadata.
 
     If a file with the same name already exists in dest_folder, appends _2, _3,
     … before the extension until a free name is found.  Creates dest_folder if
@@ -129,17 +146,51 @@ def safe_copy(src: Path, dest_folder: Path, filename: str, logger: logging.Logge
 
     Returns the final destination path.
     """
+    if (
+        not filename
+        or filename in (".", "..")
+        or Path(filename).name != filename
+        or (os.name == "nt" and ":" in filename)
+    ):
+        raise ValueError("Destination filename must be a single file name.")
+    _reject_linked_output(dest_folder)
     dest_folder.mkdir(parents=True, exist_ok=True)
+    _reject_linked_output(dest_folder)
 
     stem = Path(filename).stem
     suffix = Path(filename).suffix
     dest_path = dest_folder / filename
 
     counter = 2
-    while dest_path.exists():
-        dest_path = dest_folder / f"{stem}_{counter}{suffix}"
-        counter += 1
+    while True:
+        _reject_linked_output(dest_folder)
+        try:
+            destination = dest_path.open("xb")
+        except FileExistsError:
+            dest_path = dest_folder / f"{stem}_{counter}{suffix}"
+            counter += 1
+        else:
+            break
 
-    shutil.copy2(src, dest_path)
+    created = None
+    try:
+        with destination:
+            created = os.fstat(destination.fileno())
+            with src.open("rb") as source:
+                shutil.copyfileobj(source, destination)
+        _reject_linked_output(dest_folder)
+        if not os.path.samestat(created, dest_path.lstat()):
+            raise OSError("Destination was replaced during copying.")
+        shutil.copystat(src, dest_path)
+    except BaseException:
+        # Best-effort cleanup: verify file identity before unlinking.
+	# Concurrent path replacement remains possible between check and unlink.
+        try:
+            _reject_linked_output(dest_folder)
+            if created is not None and os.path.samestat(created, dest_path.lstat()):
+                dest_path.unlink()
+        except (OSError, ValueError):
+            logger.warning("Could not safely remove incomplete copy: %s", dest_path)
+        raise
     logger.debug("Copied %s → %s", src.name, dest_path)
     return dest_path

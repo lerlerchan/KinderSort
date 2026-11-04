@@ -78,6 +78,23 @@ class PhotoSorter:
             p for p in self.reference_folder.iterdir() if is_image_file(p)
         )
 
+        # Validate the entire set before callbacks, image loading or encoding.
+        # Keep this outside the per-image handler so invalid names abort loading.
+        for ref_path in reference_images:
+            student_name = ref_path.stem
+            if student_name.casefold() in {"_unmatched", "kindersort_log.txt"}:
+                raise ValueError(
+                    f"Invalid reference image '{ref_path.name}': student name "
+                    f"'{student_name}' is reserved for KinderSort output. "
+                    "Please rename the reference image."
+                )
+            if student_name.endswith((".", " ")):
+                raise ValueError(
+                    f"Invalid reference image '{ref_path.name}': student name "
+                    "must not end with a period or space. "
+                    "Please rename the reference image."
+                )
+
         if not reference_images:
             self.logger.warning("No reference images found in %s", self.reference_folder)
             return no_face_names

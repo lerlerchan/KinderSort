@@ -92,7 +92,7 @@
 ---
 
 ## Error Handling Rules
-- Reference photo with no detectable face → show warning dialog, skip that student
+- Any supported reference photo that cannot be read or produce a usable face encoding → reject the entire reference set, show the failed filenames and reasons, and require correction before sorting starts
 - Corrupted/unreadable image → log to `_unmatched/`, continue processing
 - Output folder not writable → show error dialog, stop gracefully
 - All errors must be caught — **never crash silently**

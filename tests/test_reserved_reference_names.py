@@ -97,7 +97,7 @@ class TestReservedReferenceNames(unittest.TestCase):
         self.assertEqual(self.sorter.load_references(), [])
         self.faces.face_encodings.assert_called_once()
         result = self.sorter.sort_all(lambda *args: None, lambda: False)
-        self.assertEqual(result, {"total": 1, "matched": 1, "unmatched": 0, "skipped": 0})
+        self.assertEqual(result, {"total": 1, "matched": 1, "unmatched": 0, "skipped": 0, "errors": 0})
         self.assertEqual(
             (self.output / Path(filename).stem / "events__event.jpg").read_bytes(),
             (self.events / "event.jpg").read_bytes(),

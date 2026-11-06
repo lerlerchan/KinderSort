@@ -103,10 +103,13 @@ Output/
 
 ## Important Behaviour
 
+- The GUI distinguishes normal unmatched photos from processing errors. “Sorting completed with errors” includes error details in the Summary box and `kindersort_log.txt`. Photos without preserved error copies are a subset of processing errors, not additional errors.
+- Fatal failures stop sorting and report an incomplete task. Originals and completed copies remain; partial counts are unavailable, and group photos may have copies in only some student folders. Check disk space, permissions and drive availability before retrying. Retries preserve existing photos and may create numbered duplicates.
+- If the log file cannot be opened, sorting does not start. Correct output permissions or file locks and retry. Cancellation leaves completed copies in place and reports an incomplete task.
 - Face matching threshold is `0.55` (strict — minimises false positives)
 - Photos are **copied**, not moved — originals are always safe
 - Photos placed directly in the Events root (no subfolders) are also supported — the folder name is used as the event name
-- If a reference photo has no detectable face, that student is skipped with a warning
+- If any supported reference photo cannot be read or produce a usable face encoding, sorting is blocked. Replace or correct the listed photos before trying again.
 - v1.1 uses higher-accuracy face recognition (CNN + multi-jitter) — sorting 500 photos typically takes **8–15 minutes** on a standard PC; the spinning timer shows progress so the app will not appear frozen
 
 ---

@@ -12,6 +12,30 @@ from pathlib import Path
 
 SUPPORTED_EXTENSIONS = {".jpg", ".jpeg", ".png", ".bmp", ".webp"}
 
+
+class SourceReadError(OSError):
+    """Identify an OSError proven to originate from source open/read."""
+
+    def __init__(self, error: OSError):
+        """Retain the original error without exposing arbitrary payloads."""
+        super().__init__(error.errno, "Could not read source photo", error.filename)
+        self.original_error = error
+
+
+class _SourceReader:
+    """Tag source reads without catching destination writes in copyfileobj."""
+
+    def __init__(self, stream):
+        """Keep the already opened source stream."""
+        self.stream = stream
+
+    def read(self, size=-1):
+        """Wrap only the actual source read failure."""
+        try:
+            return self.stream.read(size)
+        except OSError as exc:
+            raise SourceReadError(exc) from exc
+
 def validate_folder_separation(
     reference_folder: Path,
     events_folder: Path,
@@ -176,21 +200,31 @@ def safe_copy(src: Path, dest_folder: Path, filename: str, logger: logging.Logge
     try:
         with destination:
             created = os.fstat(destination.fileno())
-            with src.open("rb") as source:
-                shutil.copyfileobj(source, destination)
+            try:
+                source = src.open("rb")
+            except OSError as exc:
+                raise SourceReadError(exc) from exc
+            with source:
+                shutil.copyfileobj(_SourceReader(source), destination)
         _reject_linked_output(dest_folder)
         if not os.path.samestat(created, dest_path.lstat()):
             raise OSError("Destination was replaced during copying.")
         shutil.copystat(src, dest_path)
-    except BaseException:
+    except BaseException as failure:
         # Best-effort cleanup: verify file identity before unlinking.
 	# Concurrent path replacement remains possible between check and unlink.
         try:
             _reject_linked_output(dest_folder)
-            if created is not None and os.path.samestat(created, dest_path.lstat()):
+            if created is not None:
+                if not os.path.samestat(created, dest_path.lstat()):
+                    raise OSError("Destination was replaced during failed copying.")
                 dest_path.unlink()
-        except (OSError, ValueError):
+        except (OSError, ValueError) as cleanup_error:
             logger.warning("Could not safely remove incomplete copy: %s", dest_path)
+            if isinstance(failure, SourceReadError):
+                # Cleanup is an output operation: do not disguise its failure
+                # as a recoverable source error.
+                raise cleanup_error from failure
         raise
     logger.debug("Copied %s → %s", src.name, dest_path)
     return dest_path

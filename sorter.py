@@ -6,6 +6,7 @@ output folders.  All processing is CPU-only (no GPU required).
 """
 
 import logging
+from math import isfinite
 from collections.abc import Callable
 from pathlib import Path
 
@@ -18,6 +19,7 @@ from utils import (
     collect_event_images,
     is_image_file,
     safe_copy,
+    SourceReadError,
 )
 
 
@@ -27,7 +29,7 @@ class PhotoSorter:
     Usage::
 
         sorter = PhotoSorter(reference_folder, events_folder, output_folder, logger)
-        skipped_names = sorter.load_references()   # sync, may show warnings
+        sorter.load_references()   # sync, raises ValueError for failed references
         summary = sorter.sort_all(progress_cb, cancelled_cb)
     """
 
@@ -50,6 +52,7 @@ class PhotoSorter:
         self.output_folder = output_folder
         self.logger = logger
         self._student_encodings: dict[str, np.ndarray] = {}
+        self.error_details: list[dict[str, object]] = []
 
     # ------------------------------------------------------------------
     # Reference loading
@@ -69,13 +72,16 @@ class PhotoSorter:
                 called after each student is processed so the GUI can update.
 
         Returns:
-            List of student names whose reference photo had no detectable face.
-            Callers should show a warning for each name in this list.
+            Empty list on success, retained for caller compatibility.
 
         Raises:
-            ValueError: A student name is invalid or duplicated (case-insensitive).
+            ValueError: A student name is invalid or duplicated (case-insensitive),
+                or any reference cannot be read or produce a usable encoding.
         """
-        no_face_names: list[str] = []
+        # Never expose stale or partially loaded references after a failed load.
+        self._student_encodings.clear()
+        pending_encodings: dict[str, np.ndarray] = {}
+        failures: list[str] = []
 
         reference_images = sorted(
             p for p in self.reference_folder.iterdir() if is_image_file(p)
@@ -112,28 +118,29 @@ class PhotoSorter:
 
         if not reference_images:
             self.logger.warning("No reference images found in %s", self.reference_folder)
-            return no_face_names
+            return []
 
         total = len(reference_images)
         for current, ref_path in enumerate(reference_images, start=1):
             student_name = ref_path.stem
             if progress_callback:
                 progress_callback(current, total, student_name)
+            stage = "image reading"
             try:
                 image = face_recognition.load_image_file(str(ref_path))
+                stage = "face detection"
                 locations = face_recognition.face_locations(image, model="cnn")
+                stage = "face encoding"
                 encodings = face_recognition.face_encodings(
                     image, known_face_locations=locations, num_jitters=10, model="large"
                 )
 
                 if not encodings:
-                    self.logger.warning(
-                        "No face detected in reference photo for %s (%s)",
-                        student_name,
-                        ref_path.name,
-                    )
-                    no_face_names.append(student_name)
-                    continue
+                    raise ValueError("No usable face encoding; no face was detected")
+
+                encoding = encodings[0]
+                if len(encoding) != 128 or not all(isfinite(value) for value in encoding):
+                    raise ValueError("No usable face encoding; expected 128 finite values")
 
                 if len(encodings) > 1:
                     self.logger.warning(
@@ -141,18 +148,26 @@ class PhotoSorter:
                         student_name,
                     )
 
-                self._student_encodings[student_name] = encodings[0]
-                self.logger.info("Loaded reference for %s", student_name)
+                pending_encodings[student_name] = encoding
 
             except Exception as exc:  # noqa: BLE001
-                self.logger.error(
-                    "Could not read reference photo %s: %s", ref_path.name, exc
-                )
+                failure = f"'{ref_path.name}': {stage} failed ({type(exc).__name__}: {exc})"
+                failures.append(failure)
+                self.logger.error("Invalid reference photo %s", failure)
+
+        if failures:
+            raise ValueError(
+                "Reference photo validation failed:\n" + "\n".join(failures)
+                + "\nPlease replace or correct these reference photos and try again. "
+                "Sorting has not started."
+            )
+
+        self._student_encodings = pending_encodings
 
         self.logger.info(
             "Loaded %d student reference(s)", len(self._student_encodings)
         )
-        return no_face_names
+        return []
 
     # ------------------------------------------------------------------
     # Main sort loop
@@ -176,12 +191,16 @@ class PhotoSorter:
             cancelled: Zero-arg callable; returns True if the user has cancelled.
 
         Returns:
-            Dict with keys ``total``, ``matched``, ``unmatched``, ``skipped``.
+            Integer counts: ``total``, ``matched``, ``unmatched``, ``errors``,
+            and legacy ``skipped`` (the subset of errors not preserved).
+            Errors never count as matched or normal unmatched. Per-photo
+            details remain in ``error_details``, reset for each run.
         """
+        self.error_details = []
         images = collect_event_images(self.events_folder)
         total = len(images)
 
-        counts = {"total": total, "matched": 0, "unmatched": 0, "skipped": 0}
+        counts = {"total": total, "matched": 0, "unmatched": 0, "skipped": 0, "errors": 0}
 
         self.logger.info("Starting sort — %d images found", total)
 
@@ -194,62 +213,74 @@ class PhotoSorter:
 
             output_filename = build_output_filename(event_name, image_path.name)
 
+            stage = "image reading"
+            processing_error = None
             try:
                 rgb_image = self._load_and_resize(image_path)
-            except UnidentifiedImageError:
-                self.logger.warning("Corrupted image, moving to _unmatched: %s", image_path.name)
-                safe_copy(image_path, self.output_folder / "_unmatched", output_filename, self.logger)
-                counts["unmatched"] += 1
-                continue
-            except Exception as exc:  # noqa: BLE001
-                self.logger.error("Could not open %s: %s — skipping", image_path.name, exc)
-                counts["skipped"] += 1
-                continue
-
-            try:
+                stage = "HOG detection"
                 face_locations = face_recognition.face_locations(rgb_image)  # HOG — fast
                 if not face_locations:
+                    stage = "CNN detection"
                     face_locations = face_recognition.face_locations(rgb_image, model="cnn")  # CNN fallback
+                stage = "face encoding"
                 face_encodings = face_recognition.face_encodings(
                     rgb_image, face_locations, num_jitters=3, model="large"
                 )
+                stage = "face matching"
+                matched_students: set[str] = set()
+                for encoding in face_encodings:
+                    match = self._match_face(encoding)
+                    if match:
+                        matched_students.add(match)
             except Exception as exc:  # noqa: BLE001
-                self.logger.error("Face detection failed for %s: %s", image_path.name, exc)
-                safe_copy(image_path, self.output_folder / "_unmatched", output_filename, self.logger)
-                counts["unmatched"] += 1
-                continue
+                processing_error = exc
 
-            if not face_encodings:
-                self.logger.info("No face detected: %s → _unmatched", image_path.name)
-                safe_copy(image_path, self.output_folder / "_unmatched", output_filename, self.logger)
-                counts["unmatched"] += 1
-                continue
+            completed_paths: list[str] = []
+            if processing_error is None:
+                # Only proven source errors are recoverable here. Output and
+                # ambiguous errors propagate, even after some group copies.
+                try:
+                    for name in sorted(matched_students) if matched_students else ["_unmatched"]:
+                        copied = safe_copy(image_path, self.output_folder / name, output_filename, self.logger)
+                        completed_paths.append(str(copied))
+                except SourceReadError as exc:
+                    stage = "source copying"
+                    processing_error = exc.original_error
+                else:
+                    counts["matched" if matched_students else "unmatched"] += 1
+                    continue
 
-            matched_students: set[str] = set()
-            for encoding in face_encodings:
-                match = self._match_face(encoding)
-                if match:
-                    matched_students.add(match)
-
-            if matched_students:
-                for student_name in matched_students:
-                    dest_folder = self.output_folder / student_name
-                    safe_copy(image_path, dest_folder, output_filename, self.logger)
-                    self.logger.info(
-                        "Matched %s → %s", image_path.name, student_name
-                    )
-                counts["matched"] += 1
+            counts["errors"] += 1
+            # External exception messages may contain images/encodings. Record
+            # the stage and exception type rather than arbitrary payload text.
+            detail: dict[str, object] = {
+                "source": str(image_path), "stage": stage,
+                "reason": f"{stage} failed ({type(processing_error).__name__})",
+                "preserved": False, "preserved_path": None,
+                "preservation_reason": None, "completed_output_paths": completed_paths,
+            }
+            self.error_details.append(detail)
+            try:
+                preserved = safe_copy(image_path, self.output_folder / "_unmatched", output_filename, self.logger)
+            except SourceReadError as exc:
+                counts["skipped"] += 1
+                detail["preservation_reason"] = f"Source bytes unreadable ({type(exc.original_error).__name__})"
+            except Exception as exc:
+                detail["preservation_reason"] = f"Output preservation failed ({type(exc).__name__}); batch stopped"
+                self.logger.error("Activity photo error: %s", detail)
+                raise
             else:
-                self.logger.info("No match: %s → _unmatched", image_path.name)
-                safe_copy(image_path, self.output_folder / "_unmatched", output_filename, self.logger)
-                counts["unmatched"] += 1
+                detail["preserved"] = True
+                detail["preserved_path"] = str(preserved)
+            self.logger.error("Activity photo error: %s", detail)
 
         self.logger.info(
-            "Sort complete — total=%d matched=%d unmatched=%d skipped=%d",
+            "Sort complete — total=%d matched=%d unmatched=%d skipped=%d errors=%d",
             counts["total"],
             counts["matched"],
             counts["unmatched"],
             counts["skipped"],
+            counts["errors"],
         )
         return counts
 

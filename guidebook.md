@@ -151,11 +151,10 @@ You don't need to read it normally, but it's useful if something seems wrong.
 
 ## Common Problems & Solutions
 
-### "No face was detected" warning on startup
-**Cause:** One of your reference photos doesn't show the student's face clearly enough.
+### Reference photo validation error on startup
+**Cause:** One or more supported reference photos could not be read or produce a usable face encoding. The error lists the affected filenames and reasons. Sorting has not started.
 
-**Fix:** Replace that student's reference photo with a clearer, front-facing photo.
-Good lighting and a plain background work best.
+**Fix:** Correct or replace every listed photo, then start sorting again. Check that each file opens and is readable. For face-related errors, use a clear, front-facing photo with good lighting and a plain background.
 
 ### Many photos end up in `_unmatched`
 **Possible causes:**

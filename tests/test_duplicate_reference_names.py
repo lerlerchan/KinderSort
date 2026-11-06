@@ -95,16 +95,16 @@ class TestDuplicateReferenceNames(unittest.TestCase):
         self.assertEqual(snapshot(), before)
 
     def test_unique_names_and_valid_behavior_unchanged(self):
-        """Preserve name spelling, encodings, callbacks and no-face warnings."""
+        """Preserve name spelling, encodings and callbacks for valid references."""
         names = ("Ali.jpg", "王小明.png", "Siti.webp")
         for name in names:
             self.image(self.references, name)
         (self.references / "Ali.txt").write_bytes(b"ignored")
-        encodings = {"Ali": [1.0] * 128, "王小明": [2.0] * 128}
+        encodings = {"Ali": [1.0] * 128, "王小明": [2.0] * 128, "Siti": [3.0] * 128}
         self.faces.load_image_file.side_effect = lambda path: Path(path).stem
         self.faces.face_encodings.side_effect = lambda image, **kwargs: [encodings[image]] if image in encodings else []
         callback = Mock()
-        self.assertEqual(self.sorter.load_references(callback), ["Siti"])
+        self.assertEqual(self.sorter.load_references(callback), [])
         self.assertEqual(self.sorter._student_encodings, encodings)
         self.assertEqual(self.faces.face_encodings.call_count, 3)
         self.assertEqual(callback.call_count, 3)

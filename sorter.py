@@ -71,6 +71,9 @@ class PhotoSorter:
         Returns:
             List of student names whose reference photo had no detectable face.
             Callers should show a warning for each name in this list.
+
+        Raises:
+            ValueError: A student name is invalid or duplicated (case-insensitive).
         """
         no_face_names: list[str] = []
 
@@ -80,6 +83,7 @@ class PhotoSorter:
 
         # Validate the entire set before callbacks, image loading or encoding.
         # Keep this outside the per-image handler so invalid names abort loading.
+        seen_names: dict[str, Path] = {}
         for ref_path in reference_images:
             student_name = ref_path.stem
             if student_name.casefold() in {"_unmatched", "kindersort_log.txt"}:
@@ -94,6 +98,17 @@ class PhotoSorter:
                     "must not end with a period or space. "
                     "Please rename the reference image."
                 )
+
+            name_key = student_name.casefold()
+            if name_key in seen_names:
+                raise ValueError(
+                    f"Duplicate student name in reference images "
+                    f"'{seen_names[name_key].name}' and '{ref_path.name}'. "
+                    "Use one reference image per student; remove the extra image "
+                    "or rename the files to distinct student names "
+                    "(names are case-insensitive)."
+                )
+            seen_names[name_key] = ref_path
 
         if not reference_images:
             self.logger.warning("No reference images found in %s", self.reference_folder)

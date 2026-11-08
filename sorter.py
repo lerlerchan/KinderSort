@@ -20,6 +20,7 @@ from utils import (
     is_image_file,
     safe_copy,
     SourceReadError,
+    validate_input_path,
 )
 
 
@@ -83,9 +84,12 @@ class PhotoSorter:
         pending_encodings: dict[str, np.ndarray] = {}
         failures: list[str] = []
 
-        reference_images = sorted(
-            p for p in self.reference_folder.iterdir() if is_image_file(p)
-        )
+        validate_input_path(self.reference_folder)
+        reference_images = []
+        for ref_path in sorted(self.reference_folder.iterdir()):
+            validate_input_path(ref_path)
+            if is_image_file(ref_path):
+                reference_images.append(ref_path)
 
         # Validate the entire set before callbacks, image loading or encoding.
         # Keep this outside the per-image handler so invalid names abort loading.
@@ -125,6 +129,8 @@ class PhotoSorter:
             student_name = ref_path.stem
             if progress_callback:
                 progress_callback(current, total, student_name)
+            # Keep security failures outside the recoverable decoder handler.
+            validate_input_path(ref_path)
             stage = "image reading"
             try:
                 image = face_recognition.load_image_file(str(ref_path))
@@ -210,6 +216,7 @@ class PhotoSorter:
                 break
 
             progress_callback(current, total, image_path.name)
+            validate_input_path(image_path)
 
             output_filename = build_output_filename(event_name, image_path.name)
 

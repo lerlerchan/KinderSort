@@ -103,7 +103,28 @@ def setup_logger(output_folder: Path) -> logging.Logger:
 def is_image_file(path: Path) -> bool:
     """Return True if path has a supported image extension (case-insensitive)."""
     return path.suffix.lower() in SUPPORTED_EXTENSIONS
-    
+
+
+def validate_input_path(path: Path) -> os.stat_result:
+    """Fail closed on symlinks/reparse points before traversing or opening.
+
+    Inspect ancestors from the filesystem root down using lstat, so checking a
+    child never first follows a linked parent. Internal, external, dangling and
+    cyclic links are all rejected, without resolving or enumerating targets.
+    Missing or inaccessible paths also fail closed. This is a path check, not
+    an atomic guarantee against concurrent filesystem replacement.
+    """
+    absolute = path.absolute()
+    for component in reversed((absolute, *absolute.parents)):
+        info = component.lstat()
+        if stat.S_ISLNK(info.st_mode) or (
+            getattr(info, "st_file_attributes", 0)
+            & getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0x400)
+        ):
+            raise ValueError(f"Input path must not contain links or reparse points: {component}")
+    return info
+
+
 def collect_event_images(events_folder: Path) -> list[tuple[Path, str]]:
     """Collect images from the Events root and its subfolders.
 
@@ -114,25 +135,25 @@ def collect_event_images(events_folder: Path) -> list[tuple[Path, str]]:
     child folder under events_folder as their event name.
 
     Both root-level and nested images are always collected.
-    Each image is included only once.
+    Each image is included only once. Any link/reparse point aborts collection
+    before its target is scanned; even links to internal targets are rejected.
     """
     results: list[tuple[Path, str]] = []
 
-    for item in sorted(events_folder.iterdir()):
+    # Do not use rglob: on Python 3.11 Windows it can descend into junctions
+    # before a caller has an opportunity to filter the yielded paths.
+    pending = [(events_folder, events_folder.name)]
+    while pending:
+        folder, event_name = pending.pop()
+        validate_input_path(folder)
+        for item in sorted(folder.iterdir()):
+            info = validate_input_path(item)
+            if stat.S_ISREG(info.st_mode) and is_image_file(item):
+                results.append((item, event_name))
+            elif stat.S_ISDIR(info.st_mode):
+                pending.append((item, item.name if folder == events_folder else event_name))
 
-        # Collect images directly inside the Events root.
-        if item.is_file() and is_image_file(item):
-            results.append((item, events_folder.name))
-
-        # Collect images inside event subfolders.
-        elif item.is_dir():
-            event_name = item.name
-
-            for image_path in sorted(item.rglob("*")):
-                if image_path.is_file() and is_image_file(image_path):
-                    results.append((image_path, event_name))
-
-    return results
+    return sorted(results)
     
 def build_output_filename(event_name: str, original_filename: str) -> str:
     """Build a destination filename prefixed with the event folder name.
@@ -180,6 +201,10 @@ def safe_copy(src: Path, dest_folder: Path, filename: str, logger: logging.Logge
         or (os.name == "nt" and ":" in filename)
     ):
         raise ValueError("Destination filename must be a single file name.")
+    try:
+        validate_input_path(src)
+    except OSError as exc:
+        raise SourceReadError(exc) from exc
     _reject_linked_output(dest_folder)
     dest_folder.mkdir(parents=True, exist_ok=True)
     _reject_linked_output(dest_folder)
@@ -204,6 +229,7 @@ def safe_copy(src: Path, dest_folder: Path, filename: str, logger: logging.Logge
         with destination:
             created = os.fstat(destination.fileno())
             try:
+                validate_input_path(src)
                 source = src.open("rb")
             except OSError as exc:
                 raise SourceReadError(exc) from exc
@@ -212,6 +238,7 @@ def safe_copy(src: Path, dest_folder: Path, filename: str, logger: logging.Logge
         _reject_linked_output(dest_folder)
         if not os.path.samestat(created, dest_path.lstat()):
             raise OSError("Destination was replaced during copying.")
+        validate_input_path(src)
         shutil.copystat(src, dest_path)
     except BaseException as failure:
         # Best-effort cleanup: verify file identity before unlinking.

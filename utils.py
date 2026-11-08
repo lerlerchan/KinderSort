@@ -72,6 +72,9 @@ def setup_logger(output_folder: Path) -> logging.Logger:
     development. Safe to call multiple times — duplicate handlers are avoided.
     """
     log_path = output_folder / "kindersort_log.txt"
+    # FileHandler follows links too; reject both directory reparse points and
+    # a linked log file before it can create or append outside the output.
+    _reject_linked_output(log_path)
     logger = logging.getLogger("kindersort")
     logger.setLevel(logging.DEBUG)
 

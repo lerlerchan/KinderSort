@@ -18,7 +18,7 @@ KinderSort is an offline desktop app for kindergarten teachers. It scans event p
 | Feature | Detail |
 |---|---|
 | Fully offline | No cloud upload, no internet required |
-| CPU-only | Works on any Windows PC without a GPU |
+| CPU-only | No GPU required; compatible dependencies and sufficient resources are still needed |
 | Simple GUI | Point-and-click, no terminal needed |
 | Group photo support | One photo copied to all matched students |
 | Safe operation | Files are **copied**, never moved or deleted |
@@ -110,7 +110,7 @@ Output/
 - Photos are **copied**, not moved — originals are always safe
 - Photos placed directly in the Events root (no subfolders) are also supported — the folder name is used as the event name
 - If any supported reference photo cannot be read or produce a usable face encoding, sorting is blocked. Replace or correct the listed photos before trying again.
-- v1.1 uses higher-accuracy face recognition (CNN + multi-jitter) — sorting 500 photos typically takes **8–15 minutes** on a standard PC; the spinning timer shows progress so the app will not appear frozen
+- v1.1 uses CNN + multi-jitter recognition. Runtime depends on hardware and image content; the spinning timer indicates that the GUI is responding, not that recognition has finished.
 
 ---
 
@@ -133,6 +133,12 @@ Output/
 
 ## Developer Setup
 
+Validated source environment: Windows, Python **3.11.9**, dlib **19.24.2**, face_recognition **1.3.0**, face_recognition_models **0.3.0**, NumPy **1.26.4**. Python 3.10+ is the source syntax minimum; other environments have not been validated here. `requirements.txt` pins the four direct runtime dependencies, including Pillow 10.3.0; `face_recognition_models` is transitive. tkinter must be available in the Python installation.
+
+The commands below are source setup instructions, not a guaranteed one-click Windows installation. Installing dlib may require a compatible compiler/toolchain or a separately verified wheel; this audit did not install dependencies, compile dlib or validate a fresh machine. PyInstaller and python-docx are optional packaging/document tools, not runtime requirements. Building an executable and distributing third-party models require separate validation; no installer or release binary was produced in this audit.
+
+Use PowerShell activation with `.\.venv\Scripts\Activate.ps1` (subject to your existing local policy; do not weaken security policy for this project), or invoke `.\.venv\Scripts\python.exe` directly.
+
 ```bash
 python -m venv .venv
 .venv\Scripts\activate
@@ -145,4 +151,21 @@ Build Windows executable:
 ```bash
 pyinstaller --onefile --windowed --name "KinderSort" main.py
 # Output: dist/KinderSort.exe
+```
+
+## Safe use and current guide
+
+See [the current teacher guide](guidebook.md#safety-retry-and-privacy) for filename rules, folder safety, Cancel/close behavior, error counts, retries and privacy. Existing Word documentation and screenshots are historical and have not been revalidated for this source version. Release links above do not establish that a downloadable executable contains these changes.
+
+Output must be separate from both inputs. Use ordinary local folders without links/reparse points and do not change them while sorting. Reference names must be unique ignoring case and extension; `_unmatched` and `kindersort_log.txt` are reserved, and names must not end in a period or space. Activity root photos and nested subfolders are supported.
+
+`_unmatched` contains normal nonmatches and readable originals of processing-error photos; check Summary to distinguish them. The log is `Output/kindersort_log.txt` and may contain names, paths and reference error text. Protect photos and logs under school privacy rules and manually verify matches before sharing.
+
+Cancel waits for reference loading/collection and the current activity operation, then stops before the next photo. Closing waits for the worker to finish safely. Completed copies remain; retries preserve existing photos and can add numbered duplicates. Total counts discovered photos, including unprocessed photos after cancellation; matched counts photos rather than group copies.
+
+Regression check (use the validated environment):
+
+```powershell
+python -B -m unittest discover -s tests -p "test_*.py" -v
+python -B -m pip check
 ```

@@ -26,7 +26,7 @@ One clear, front-facing photo of each student.
 - Make sure the face is clearly visible and well-lit
 
 ### 2. Events Folder
-A folder containing **subfolders** — one subfolder per event.
+A folder containing photos directly at its root, in event subfolders, or in nested folders within those event subfolders. Subfolders are optional; use one per event to keep event names clear.
 - Example structure:
   ```
   Events/
@@ -36,11 +36,11 @@ A folder containing **subfolders** — one subfolder per event.
       Field_Trip/
           IMG_003.jpg
   ```
-- ⚠️ **Important:** Photos must be inside a subfolder (the event name), not directly in the Events folder.
+- Photos can also be directly in Events; its folder name becomes their event prefix. Nested photos use the first subfolder under Events as their event name.
 
 ### 3. Output Folder
-An empty folder where KinderSort will save the sorted results.
-You can create a new empty folder anywhere on your computer.
+A separate folder where KinderSort will save the sorted results. It must not be the same as, inside, or contain either input folder.
+Starting with an empty output folder is recommended, but is not required. Existing photos are preserved; retries can produce numbered duplicate copies such as `_2` and `_3`.
 
 ---
 
@@ -72,7 +72,7 @@ The path to your folder will appear in the box.
 
 Click the **Browse…** button next to "Events Folder".
 
-Navigate to your Events folder (the one containing event subfolders) and click **Select Folder**.
+Navigate to your Events folder (containing root-level photos, event subfolders, or both) and click **Select Folder**.
 
 ![Events folder selected](guidebook_assets/03_events_selected.png)
 
@@ -82,7 +82,7 @@ Navigate to your Events folder (the one containing event subfolders) and click *
 
 Click the **Browse…** button next to "Output Folder".
 
-Navigate to your empty output folder and click **Select Folder**.
+Navigate to your separate output folder (preferably empty for a new run) and click **Select Folder**.
 
 When all three folders are selected, the app is ready.
 
@@ -100,9 +100,9 @@ KinderSort will begin processing your photos. You will see:
 
 ![Sorting in progress](guidebook_assets/05_sorting_in_progress.png)
 
-> ⏱️ Processing time depends on the number of photos. Expect about 1–2 minutes per 10 photos on a normal computer.
+> Processing time depends on hardware, image content and the number of photos; no fixed processing time is guaranteed.
 
-You can click **Cancel** at any time to stop — photos processed so far will be saved.
+**Cancel** requests a safe stop before the next activity photo. Reference loading and activity collection must finish first; the current recognition/copy operation is not interrupted. Completed copies remain and the task is incomplete. Closing the window requests cancellation and waits for the worker to finish safely; do not force-terminate it.
 
 ---
 
@@ -116,7 +116,10 @@ The summary shows:
 - **Total images found** — how many photos were scanned
 - **Matched (sorted)** — how many photos were placed into student folders
 - **Unmatched** — photos where no student face was recognised
-- **Skipped (errors)** — photos that could not be opened
+- **Processing errors** — photos that failed reading, detection, encoding, matching or source copying; excluded from matched and normal unmatched counts
+- **Error photos without preserved copies** — a subset of processing errors whose source bytes could not be copied
+
+Total is the number of discovered activity photos, including unprocessed photos after cancellation. A group photo counts once as matched, regardless of the number of student copies. Expand the window or scroll the Summary text to see all details.
 
 ---
 
@@ -133,8 +136,8 @@ Output/
         Sports_Day__IMG_001.jpg   ← same group photo, copied here too
         Field_Trip__IMG_023.jpg
     _unmatched/
-        blurry_photo.jpg
-        background_only.jpg
+        Sports_Day__blurry_photo.jpg
+        Sports_Day__background_only.jpg
     kindersort_log.txt
 ```
 
@@ -143,6 +146,7 @@ Output/
 The **`_unmatched` folder** contains:
 - Photos where no faces were detected (e.g. landscape shots, blurry images)
 - Photos where faces were detected but didn't match any student (e.g. teachers, parents)
+- Original bytes of processing-error photos, when readable; these are errors, not normal unmatched results. Check Summary before using them.
 
 The **`kindersort_log.txt` file** is a detailed record of everything KinderSort did.
 You don't need to read it normally, but it's useful if something seems wrong.
@@ -169,9 +173,9 @@ are partially covered or turned away.
 **Fix:** Make sure all three folder fields are filled in before clicking Start Sorting.
 
 ### The app seems stuck / progress bar not moving
-**Cause:** Face recognition is CPU-intensive — it is still working.
+**Possible cause:** Face recognition is CPU-intensive; a stationary progress bar alone does not prove a failure or successful processing.
 
-**Fix:** Wait patiently. A batch of 100 photos may take 10–15 minutes on an older computer.
+**Fix:** Allow time for the current operation. Runtime varies by computer and photo content.
 Watch the status line — if it shows a new filename, it is still running.
 
 ### Output folder photos have long names like `Sports_Day__IMG_001.jpg`
@@ -185,8 +189,18 @@ which event a photo came from.
 1. **Use a clear, recent reference photo** — front-facing, good lighting, no sunglasses
 2. **One face per reference photo** — if a reference photo has multiple faces, KinderSort uses the first face detected
 3. **Consistent lighting** helps — very dark or backlit event photos may not match well
-4. **Re-run with a higher tolerance** if you're missing matches — ask your IT support to adjust the `DISTANCE_THRESHOLD` in `sorter.py` from `0.5` to `0.6`
-5. **Keep events in subfolders** — KinderSort only reads photos inside named subfolders of the Events folder
+4. **Review matches manually** before sharing: face recognition can make mistakes; the current threshold is `0.55`.
+5. **Keep events in subfolders** for clear output prefixes; photos directly in Events are also supported.
+
+## Safety, Retry and Privacy
+
+- Use ordinary local folders without symlinks, junctions or other reparse points. Output must neither contain nor be inside either input folder. Do not replace files or folders while sorting.
+- Reference photos must be directly in Reference, one per student, with unique names ignoring case and extension. Do not use `_unmatched` or `kindersort_log.txt` as the name before the image extension, or names ending in a period or space. Use names valid on Windows and one face per photo.
+- Supported formats: `.jpg`, `.jpeg`, `.png`, `.bmp`, `.webp`. Other extensions are ignored.
+- Output errors stop the batch. Completed copies remain; a group photo may have copies in only some student folders. After correcting the problem, inspect existing output or choose a new empty output folder. Retrying preserves existing photos and may add `_2`, `_3` copies.
+- The log is `Output/kindersort_log.txt`. It can contain student names, local paths, match distances and reference-library error text. Runtime log write failures may leave the log incomplete without a GUI warning; do not rely on it as a complete audit trail.
+- Process real student photos only with school authorization. Keep inputs, outputs and logs in access-controlled local storage, outside public or automatically shared folders. Do not attach them to issues or PRs. Check recipients and matches before sharing; follow school retention rules.
+- This Markdown guide is the current source. The existing Word guide and screenshots predate these fixes and may show older behavior; they have not been regenerated or revalidated for release.
 
 ---
 

@@ -7,13 +7,13 @@ background thread so the UI remains responsive during processing.
 
 import threading
 import time
+import re
 import tkinter as tk
 from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
 
 from sorter import PhotoSorter
-from utils import setup_logger
-
+from utils import setup_logger, validate_folder_separation
 
 class KinderSortApp(tk.Tk):
     """Main application window for KinderSort — Student Photo Organiser."""
@@ -35,6 +35,9 @@ class KinderSortApp(tk.Tk):
 
         # Cancellation flag shared between GUI and worker thread
         self._cancel_flag = threading.Event()
+        self._worker: threading.Thread | None = None
+        self._closing = False
+        self.protocol("WM_DELETE_WINDOW", self._on_close)
 
         # Spinner / elapsed timer state
         self._spinner_frames = ["🕐", "🕑", "🕒", "🕓", "🕔", "🕕", "🕖", "🕗", "🕘", "🕙", "🕚", "🕛"]
@@ -180,6 +183,8 @@ class KinderSortApp(tk.Tk):
 
     def _on_start(self) -> None:
         """Validate inputs then launch the worker thread for all heavy work."""
+        if self._closing or (self._worker is not None and self._worker.is_alive()):
+            return
         ref = self._reference_var.get().strip()
         events = self._events_var.get().strip()
         output = self._output_var.get().strip()
@@ -200,11 +205,31 @@ class KinderSortApp(tk.Tk):
                 messagebox.showerror("Invalid folder", f"{name} folder does not exist:\n{path}")
                 return
 
+        # Prevent input and output folder conflicts
+        try:
+            validate_folder_separation(
+                ref_path,
+                events_path,
+                output_path,
+            )
+        except ValueError as exc:
+            messagebox.showerror(
+                "Invalid folder configuration",
+                str(exc),
+            )
+            return
+        except OSError as exc:
+            messagebox.showerror(
+                "Folder validation error",
+                f"Cannot check folder paths:\n{exc}",
+            )
+            return
+            
         # Ensure output folder is creatable / writable
         try:
             output_path.mkdir(parents=True, exist_ok=True)
         except OSError as exc:
-            messagebox.showerror("Output folder error", f"Cannot create output folder:\n{exc}")
+            self._on_error(KinderSortApp._failure_message("Output folder initialization", exc))
             return
 
         # Disable start, enable cancel before launching thread
@@ -216,13 +241,24 @@ class KinderSortApp(tk.Tk):
         self._set_status("Loading reference photos…")
         self._start_ticker()
 
-        logger = setup_logger(output_path)
-        sorter = PhotoSorter(ref_path, events_path, output_path, logger)
-
-        thread = threading.Thread(
-            target=self._run_sorting, args=(sorter,), daemon=True
-        )
-        thread.start()
+        try:
+            logger = setup_logger(output_path)
+        except Exception as exc:  # FileHandler can fail before a worker exists.
+            self._on_error(KinderSortApp._failure_message(
+                "Logger initialization", exc,
+                f"Cannot open {output_path / 'kindersort_log.txt'}. "
+                "Check output folder permissions and close any program locking the log file.",
+            ))
+            return
+        try:
+            sorter = PhotoSorter(ref_path, events_path, output_path, logger)
+            thread = threading.Thread(
+                target=self._run_sorting, args=(sorter,), daemon=True
+            )
+            self._worker = thread
+            thread.start()
+        except Exception as exc:
+            self._on_error(KinderSortApp._failure_message("Worker startup", exc))
 
     def _run_sorting(self, sorter: PhotoSorter) -> None:
         """Worker thread: load references, then sort all photos."""
@@ -231,14 +267,20 @@ class KinderSortApp(tk.Tk):
                 progress_callback=self._on_ref_progress
             )
         except Exception as exc:  # noqa: BLE001
-            self.after(0, self._on_error, str(exc))
+            self.after(0, self._on_error, KinderSortApp._failure_message(
+                "Reference validation", exc,
+                KinderSortApp._reference_error_message(exc),
+            ))
             return
 
         if skipped_names:
             self.after(0, self._show_ref_warning, skipped_names)
 
         if not sorter._student_encodings:
-            self.after(0, self._on_error, "No student faces could be loaded. Please check your Reference folder.")
+            self.after(0, self._on_error, KinderSortApp._failure_message(
+                "Reference validation", ValueError(),
+                "No student faces could be loaded. Please check your Reference folder. Sorting has not started.",
+            ))
             return
 
         try:
@@ -246,9 +288,54 @@ class KinderSortApp(tk.Tk):
                 progress_callback=self._on_progress,
                 cancelled=self._cancel_flag.is_set,
             )
-            self.after(0, self._on_done, summary)
+            # Copy sanitized records before handing ownership to the GUI.
+            result = dict(summary)
+            result["error_details"] = [dict(detail) for detail in sorter.error_details]
+            self.after(0, self._on_done, result)
         except Exception as exc:  # noqa: BLE001
-            self.after(0, self._on_error, str(exc))
+            self.after(0, self._on_error, KinderSortApp._failure_message("Activity sorting / output copying", exc))
+
+    @staticmethod
+    def _reference_error_message(exc: Exception) -> str:
+        """Keep reference validation guidance but strip external library payloads."""
+        message = str(exc)
+        if isinstance(exc, ValueError):
+            if message.startswith("Reference photo validation failed:\n"):
+                # Only the filename, known stage and exception class are safe.
+                failures = re.findall(
+                    r"^('.*?': (?:image reading|face detection|face encoding) failed \([A-Za-z_][A-Za-z_0-9]*):",
+                    message, re.MULTILINE,
+                )
+                return ("Reference photo validation failed:\n"
+                        + "\n".join(f"{failure})" for failure in failures)
+                        + "\nPlease replace or correct these reference photos. Sorting has not started.")
+            # These messages are produced by the filename preflight, before
+            # any external image library is called.
+            if message.startswith(("Invalid reference image '", "Duplicate student name in reference images ")):
+                return message
+        return "Check reference filenames and replace unreadable reference photos. Sorting has not started."
+
+    @staticmethod
+    def _failure_message(stage: str, exc: Exception, guidance: str = "") -> str:
+        """Describe failure without exposing arbitrary image-library payloads.
+
+        The sorter returns counts only on success. Progress is emitted before
+        processing, so it cannot establish completed-photo or group-copy counts.
+        """
+        if isinstance(exc, PermissionError):
+            reason = "Access was denied. Check folder permissions and file locks."
+        elif isinstance(exc, OSError):
+            reason = "A file operation failed. Check disk space, folder access, and drive availability."
+        else:
+            reason = f"The operation failed ({type(exc).__name__})."
+        return (
+            f"{stage} failed.\n{reason}\n{guidance}\n\n"
+            "The task is incomplete. Originals and previously completed output copies remain.\n"
+            "Reliable partial-completion counts are unavailable; a group photo may have "
+            "copies in only some student folders.\n"
+            "Correct the problem, check existing output, and retry. Existing photos are "
+            "preserved; retrying may create numbered duplicate copies."
+        )
 
     def _start_ticker(self) -> None:
         """Start the spinning clock emoji and elapsed timer."""
@@ -298,6 +385,25 @@ class KinderSortApp(tk.Tk):
         self._cancel_btn.config(state=tk.DISABLED)
         self._set_status("Cancelling… (finishing current image)")
 
+    def _on_close(self) -> None:
+        """Keep Tk alive until the current operation and its copies finish."""
+        if self._closing:
+            return
+        self._closing = True
+        self._cancel_flag.set()
+        self._start_btn.config(state=tk.DISABLED)
+        self._cancel_btn.config(state=tk.DISABLED)
+        self._stop_ticker()
+        self._set_status("Closing… waiting for the current operation to finish safely.")
+        self._finish_close()
+
+    def _finish_close(self) -> None:
+        """Poll without blocking Tk or interrupting a worker inside safe_copy."""
+        if self._worker is not None and self._worker.is_alive():
+            self.after(50, self._finish_close)
+            return
+        self.destroy()
+
     # ------------------------------------------------------------------
     # Cross-thread callbacks (all scheduled via after() from worker)
     # ------------------------------------------------------------------
@@ -312,26 +418,41 @@ class KinderSortApp(tk.Tk):
         self._progress_var.set(pct)
         self._set_status(f"[{current}/{total}] {filename}")
 
-    def _on_done(self, summary: dict[str, int]) -> None:
+    def _on_done(self, summary: dict[str, object]) -> None:
         """Show summary and re-enable controls after successful completion."""
+        if self._closing:
+            return
         elapsed = int(time.monotonic() - self._sort_start_time) if self._sort_start_time else None
-        self._stop_ticker(final_elapsed=elapsed)
+        cancelled = self._cancel_flag.is_set()
+        self._stop_ticker(final_elapsed=None if cancelled else elapsed)
         self._start_btn.config(state=tk.NORMAL)
         self._cancel_btn.config(state=tk.DISABLED)
-        self._progress_var.set(100)
+        if not cancelled:
+            self._progress_var.set(100)
 
-        cancelled = self._cancel_flag.is_set()
-        status = "Sorting cancelled." if cancelled else "Sorting complete."
+        status = ("Sorting cancelled. Task incomplete; completed copies remain." if cancelled
+                  else "Sorting completed with errors" if summary["errors"]
+                  else "Sorting complete.")
         self._set_status(status)
 
         lines = [
             status,
             "",
-            f"Total images found : {summary['total']}",
-            f"Matched (sorted)   : {summary['matched']}",
-            f"Unmatched          : {summary['unmatched']}",
-            f"Skipped (errors)   : {summary['skipped']}",
+            f"Total activity photos: {summary['total']}",
+            f"Matched: {summary['matched']}",
+            f"Normal unmatched: {summary['unmatched']}",
+            f"Processing errors: {summary['errors']}",
+            f"Error photos without preserved copies: {summary['skipped']}",
+            "(Without preserved copies is a subset of processing errors.)",
         ]
+        details = summary.get("error_details", [])
+        if summary["errors"]:
+            lines.extend(["", "Error details (also available in kindersort_log.txt):"])
+            for detail in details:
+                preservation = "preserved" if detail["preserved"] else "not preserved"
+                lines.append(f"{detail['source']}: {detail['reason']}; {preservation}")
+                if detail.get("preservation_reason"):
+                    lines.append(str(detail["preservation_reason"]))
         self._write_summary("\n".join(lines))
 
         if summary["total"] == 0:
@@ -344,11 +465,14 @@ class KinderSortApp(tk.Tk):
 
     def _on_error(self, message: str) -> None:
         """Show an error dialog and re-enable controls."""
+        if self._closing:
+            return
         self._stop_ticker()
         self._start_btn.config(state=tk.NORMAL)
         self._cancel_btn.config(state=tk.DISABLED)
-        self._set_status("An error occurred.")
-        messagebox.showerror("Unexpected error", message)
+        self._set_status("Sorting stopped. Task incomplete.")
+        self._write_summary(message)
+        messagebox.showerror("Sorting stopped — task incomplete", message)
 
     # ------------------------------------------------------------------
     # Widget helpers

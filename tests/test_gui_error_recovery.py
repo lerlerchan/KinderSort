@@ -24,6 +24,8 @@ class TestGuiErrorRecovery(unittest.TestCase):
         self.app._sort_start_time = None
         self.app._ticker_id = 'timer'
         self.app._cancel_flag = threading.Event()
+        self.app._worker = None
+        self.app._closing = False
         self.app.after_cancel = Mock()
         self.queue = []
         self.app.after = Mock(side_effect=lambda delay, cb, *args: self.queue.append((cb, args)))

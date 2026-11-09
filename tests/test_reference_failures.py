@@ -126,6 +126,7 @@ class TestReferenceFailures(unittest.TestCase):
         """Run real loading, worker, and error callback with mocked UI boundaries."""
         module = self.gui_module()
         app = Mock()
+        app._closing = False
         app._on_error = lambda message: module.KinderSortApp._on_error(app, message)
         app.after.side_effect = lambda delay, callback, *args: callback(*args)
         with patch.object(self.sorter, "sort_all", wraps=self.sorter.sort_all) as sort_all:

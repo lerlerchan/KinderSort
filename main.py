@@ -35,6 +35,9 @@ class KinderSortApp(tk.Tk):
 
         # Cancellation flag shared between GUI and worker thread
         self._cancel_flag = threading.Event()
+        self._worker: threading.Thread | None = None
+        self._closing = False
+        self.protocol("WM_DELETE_WINDOW", self._on_close)
 
         # Spinner / elapsed timer state
         self._spinner_frames = ["🕐", "🕑", "🕒", "🕓", "🕔", "🕕", "🕖", "🕗", "🕘", "🕙", "🕚", "🕛"]
@@ -180,6 +183,8 @@ class KinderSortApp(tk.Tk):
 
     def _on_start(self) -> None:
         """Validate inputs then launch the worker thread for all heavy work."""
+        if self._closing or (self._worker is not None and self._worker.is_alive()):
+            return
         ref = self._reference_var.get().strip()
         events = self._events_var.get().strip()
         output = self._output_var.get().strip()
@@ -250,6 +255,7 @@ class KinderSortApp(tk.Tk):
             thread = threading.Thread(
                 target=self._run_sorting, args=(sorter,), daemon=True
             )
+            self._worker = thread
             thread.start()
         except Exception as exc:
             self._on_error(KinderSortApp._failure_message("Worker startup", exc))
@@ -379,6 +385,25 @@ class KinderSortApp(tk.Tk):
         self._cancel_btn.config(state=tk.DISABLED)
         self._set_status("Cancelling… (finishing current image)")
 
+    def _on_close(self) -> None:
+        """Keep Tk alive until the current operation and its copies finish."""
+        if self._closing:
+            return
+        self._closing = True
+        self._cancel_flag.set()
+        self._start_btn.config(state=tk.DISABLED)
+        self._cancel_btn.config(state=tk.DISABLED)
+        self._stop_ticker()
+        self._set_status("Closing… waiting for the current operation to finish safely.")
+        self._finish_close()
+
+    def _finish_close(self) -> None:
+        """Poll without blocking Tk or interrupting a worker inside safe_copy."""
+        if self._worker is not None and self._worker.is_alive():
+            self.after(50, self._finish_close)
+            return
+        self.destroy()
+
     # ------------------------------------------------------------------
     # Cross-thread callbacks (all scheduled via after() from worker)
     # ------------------------------------------------------------------
@@ -395,6 +420,8 @@ class KinderSortApp(tk.Tk):
 
     def _on_done(self, summary: dict[str, object]) -> None:
         """Show summary and re-enable controls after successful completion."""
+        if self._closing:
+            return
         elapsed = int(time.monotonic() - self._sort_start_time) if self._sort_start_time else None
         cancelled = self._cancel_flag.is_set()
         self._stop_ticker(final_elapsed=None if cancelled else elapsed)
@@ -438,6 +465,8 @@ class KinderSortApp(tk.Tk):
 
     def _on_error(self, message: str) -> None:
         """Show an error dialog and re-enable controls."""
+        if self._closing:
+            return
         self._stop_ticker()
         self._start_btn.config(state=tk.NORMAL)
         self._cancel_btn.config(state=tk.DISABLED)

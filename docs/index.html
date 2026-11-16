@@ -1,0 +1,117 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="description" content="KinderSort is an offline Windows tool that helps educators organise student event photos into individual folders." />
+  <meta name="theme-color" content="#f5f8fc" />
+  <title>KinderSort — Every memory, neatly organised.</title>
+  <link rel="stylesheet" href="./styles.css" />
+  <script src="./script.js" defer></script>
+</head>
+<body>
+  <div class="announcement" role="note">
+    <span class="announcement-dot" aria-hidden="true"></span>
+    <span data-i18n="announcement">Made for teachers. Designed to work offline.</span>
+  </div>
+
+  <header class="site-header" id="top">
+    <div class="shell nav-shell">
+      <a class="brand" href="#top" aria-label="KinderSort home">
+        <span class="brand-mark" aria-hidden="true"><span></span><span></span><span></span><span></span></span>
+        <span>Kinder<span class="brand-accent">Sort</span><span class="brand-period">.</span></span>
+      </a>
+      <nav class="nav-links" aria-label="Main navigation">
+        <a href="#features" data-i18n="nav_features">Features</a>
+        <a href="#how-it-works" data-i18n="nav_guide">How it works</a>
+        <a href="#questions" data-i18n="nav_faq">FAQ</a>
+      </nav>
+      <div class="nav-actions">
+        <button class="language-switch" id="language-switch" type="button" aria-label="Switch to Chinese"><span class="lang-icon" aria-hidden="true">◎</span><span id="language-label">中文</span></button>
+        <a class="nav-download" href="https://github.com/lerlerchan/KinderSort/releases/tag/v1.2" target="_blank" rel="noopener noreferrer"><span data-i18n="nav_download">Get KinderSort</span><span aria-hidden="true">↗</span></a>
+      </div>
+    </div>
+  </header>
+
+  <main>
+    <section class="hero shell" aria-labelledby="hero-title">
+      <div class="hero-copy">
+        <div class="eyebrow"><span class="eyebrow-star">✳</span> <span data-i18n="eyebrow">THE SIMPLER WAY TO SORT SCHOOL PHOTOS</span></div>
+        <h1 id="hero-title" data-i18n-html="hero_title">More memories.<br /><em>Less sorting.</em></h1>
+        <p class="hero-lead" data-i18n="hero_lead">From sports days to school trips, KinderSort helps teachers organise event photos by student — right on their own computer.</p>
+        <div class="hero-actions">
+          <a class="primary-button" href="#download"><span class="windows-symbol" aria-hidden="true">▦</span><span data-i18n="hero_button">Download for Windows</span><span aria-hidden="true">↗</span></a>
+          <a class="text-link" href="#how-it-works"><span data-i18n="hero_how">See how it works</span><span aria-hidden="true">→</span></a>
+        </div>
+        <div class="hero-proof">
+          <div class="proof-bubble">✓</div><span data-i18n="proof_1">Offline by design</span>
+          <div class="proof-divider"></div>
+          <div class="proof-bubble">✓</div><span data-i18n="proof_2">Original photos stay untouched</span>
+        </div>
+      </div>
+      <div class="hero-art" aria-label="Illustration of KinderSort organising photos into student folders">
+        <div class="art-glow" aria-hidden="true"></div>
+        <div class="float-spark float-spark-one" aria-hidden="true">✦</div>
+        <div class="float-spark float-spark-two" aria-hidden="true">✳</div>
+        <div class="app-frame">
+          <div class="app-topbar"><div class="traffic"><i></i><i></i><i></i></div><span>KinderSort</span><div class="window-dash"></div></div>
+          <div class="app-body">
+            <div class="app-title" data-i18n="mock_title">Your photos, organised.</div>
+            <div class="app-subtitle" data-i18n="mock_subtitle">Student Photo Organiser</div>
+            <div class="mock-row"><span class="mock-small-icon">◧</span><span data-i18n="mock_reference">Reference photos</span><span class="mock-folder-name">/students</span><span class="mock-check">✓</span></div>
+            <div class="mock-row"><span class="mock-small-icon">▧</span><span data-i18n="mock_event">Event photos</span><span class="mock-folder-name">/sports-day</span><span class="mock-check">✓</span></div>
+            <div class="mock-row"><span class="mock-small-icon">▤</span><span data-i18n="mock_output">Output folder</span><span class="mock-folder-name">/sorted</span><span class="mock-check">✓</span></div>
+            <div class="mock-progress-head"><span data-i18n="mock_progress">Sorting photos</span><b>100%</b></div>
+            <div class="mock-progress"><span></span></div>
+            <div class="mock-complete"><span class="mock-complete-icon">✓</span><span data-i18n="mock_complete">Ready to review</span></div>
+          </div>
+        </div>
+        <div class="folder-card folder-card-left"><div class="mini-folder mint">▰</div><div><b>Ali</b><span data-i18n="folder_photos">Photos sorted</span></div><span class="card-check">✓</span></div>
+        <div class="folder-card folder-card-right"><div class="mini-folder peach">▰</div><div><b>Siti</b><span data-i18n="folder_photos">Photos sorted</span></div><span class="card-check">✓</span></div>
+        <div class="illustration-note" data-i18n="illustration_note">Illustration · not a screenshot of the app</div>
+      </div>
+    </section>
+
+    <section class="trust-strip" aria-label="KinderSort highlights"><div class="shell trust-grid">
+      <span><span class="trust-icon">⌘</span> <span data-i18n="trust_windows">Made for Windows</span></span>
+      <span><span class="trust-icon">◉</span> <span data-i18n="trust_offline">No cloud upload</span></span>
+      <span><span class="trust-icon">▤</span> <span data-i18n="trust_copy">Copies, not moves</span></span>
+      <span><span class="trust-icon">♡</span> <span data-i18n="trust_teachers">Built for educators</span></span>
+    </div></section>
+
+    <section class="section shell features-section" id="features">
+      <div class="section-heading"><div><span class="section-kicker" data-i18n="features_kicker">A LITTLE LESS ADMIN, A LOT MORE TIME</span><h2 data-i18n-html="features_title">The good part of the day<br /><em>isn't sorting files.</em></h2></div><p data-i18n="features_lead">KinderSort handles the repetitive organisation work so you can get back to sharing those memorable classroom moments.</p></div>
+      <div class="feature-grid">
+        <article class="feature-card"><div class="feature-icon sky"><span>◎</span></div><h3 data-i18n="feature_one_title">Face-based matching</h3><p data-i18n="feature_one_text">Matches faces in event photos against the reference photos you provide.</p><span class="feature-index">01 / 04</span></article>
+        <article class="feature-card"><div class="feature-icon sage"><span>▦</span></div><h3 data-i18n="feature_two_title">Folders, automatically</h3><p data-i18n="feature_two_text">Creates student folders and copies matching photos to the right places.</p><span class="feature-index">02 / 04</span></article>
+        <article class="feature-card"><div class="feature-icon yellow"><span>♧</span></div><h3 data-i18n="feature_three_title">Group photo friendly</h3><p data-i18n="feature_three_text">One group photo can be copied into multiple students' folders.</p><span class="feature-index">03 / 04</span></article>
+        <article class="feature-card"><div class="feature-icon lavender"><span>⌁</span></div><h3 data-i18n="feature_four_title">See what happened</h3><p data-i18n="feature_four_text">A summary and local log help you review matches, unmatched photos and processing errors.</p><span class="feature-index">04 / 04</span></article>
+      </div>
+    </section>
+
+    <section class="workflow-wrap" id="how-it-works"><div class="shell workflow-content">
+      <div class="workflow-head"><span class="section-kicker" data-i18n="workflow_kicker">FOUR SIMPLE STEPS</span><h2 data-i18n-html="workflow_title">From messy camera roll<br />to <em>neatly sorted folders.</em></h2><p data-i18n="workflow_lead">No complicated setup. Just point KinderSort to the folders on your Windows computer.</p></div>
+      <div class="steps">
+        <article class="step"><div class="step-number">01</div><div class="step-graphic"><div class="step-file">▣<span>Ali.jpg</span></div><div class="step-file back">▣<span>Siti.png</span></div></div><h3 data-i18n="step_one_title">Add reference photos</h3><p data-i18n="step_one_text">Prepare one clear front-facing photo per student, with the student's name as the filename.</p></article>
+        <article class="step"><div class="step-number">02</div><div class="step-graphic"><div class="graphic-photo one">✿</div><div class="graphic-photo two">☼</div><div class="graphic-photo three">✧</div></div><h3 data-i18n="step_two_title">Choose event photos</h3><p data-i18n="step_two_text">Select a folder with photos from sports days, trips or other school activities.</p></article>
+        <article class="step"><div class="step-number">03</div><div class="step-graphic"><div class="graphic-progress"><span>Sorting...</span><i><b></b></i><span>✓</span></div></div><h3 data-i18n="step_three_title">Start sorting</h3><p data-i18n="step_three_text">Let KinderSort process photos locally. Time needed depends on your computer and images.</p></article>
+        <article class="step"><div class="step-number">04</div><div class="step-graphic"><div class="output-file">📁 Ali</div><div class="output-file">📁 Siti</div><div class="output-file muted">📁 _unmatched</div></div><h3 data-i18n="step_four_title">Review the results</h3><p data-i18n="step_four_text">Check each student folder and manually verify important matches before sharing photos.</p></article>
+      </div>
+      <div class="guide-callout"><div class="guide-callout-icon">?</div><div><b data-i18n="guide_title">Need a hand setting things up?</b><p data-i18n="guide_text">Our step-by-step teacher guide walks you through folders, common issues and what to expect.</p></div><a href="https://github.com/lerlerchan/KinderSort/blob/main/guidebook.md" target="_blank" rel="noopener noreferrer"><span data-i18n="guide_link">Read the teacher guide</span> ↗</a></div>
+    </div></section>
+
+    <section class="privacy-section shell"><div class="privacy-panel"><div class="privacy-illustration" aria-hidden="true"><div class="shield-outline"><span>✓</span></div><div class="small-orbit orbit-a"></div><div class="small-orbit orbit-b"></div></div><div class="privacy-copy"><span class="section-kicker light" data-i18n="privacy_kicker">YOUR PHOTOS, YOUR COMPUTER</span><h2 data-i18n-html="privacy_title">Memories belong<br /><em>with your school.</em></h2><p data-i18n="privacy_text">KinderSort is a desktop application. Photo processing happens locally — the website does not upload or process student images.</p><p class="privacy-small" data-i18n="privacy_small">Teachers should still follow school privacy rules, protect local folders and review matching results before sharing.</p></div></div></section>
+
+    <section class="download-section shell" id="download"><div class="download-card"><div class="download-orb orb-one"></div><div class="download-orb orb-two"></div><div class="download-content"><span class="section-kicker" data-i18n="download_kicker">READY WHEN YOU ARE</span><h2 data-i18n-html="download_title">Give your photo folders<br />a little <em>breathing room.</em></h2><p data-i18n="download_lead">Get the latest publicly released Windows version from the official KinderSort GitHub repository.</p><div class="download-actions"><a class="primary-button" href="https://github.com/lerlerchan/KinderSort/releases/download/v1.2/KinderSortv1.2.exe" target="_blank" rel="noopener noreferrer"><span class="windows-symbol" aria-hidden="true">▦</span><span data-i18n="download_button">Download v1.2 (.exe)</span><span aria-hidden="true">↗</span></a><a class="text-link" href="https://github.com/lerlerchan/KinderSort/releases/tag/v1.2" target="_blank" rel="noopener noreferrer"><span data-i18n="download_release">View release details</span> ↗</a></div><p class="release-note" data-i18n="release_note">Windows · Public release v1.2 · No installation required. This release predates the fixes proposed in PR #15; those changes are not included in this download.</p></div><div class="download-graphic" aria-hidden="true"><div class="download-icon-shell"><span>↓</span></div><div class="download-label">KinderSort<span>.exe</span></div><div class="download-platform">WINDOWS</div></div></div></section>
+
+    <section class="section shell faq-section" id="questions"><div class="faq-intro"><span class="section-kicker" data-i18n="faq_kicker">GOOD TO KNOW</span><h2 data-i18n-html="faq_title">A few quick<br /><em>questions.</em></h2><p data-i18n="faq_lead">Answers to the things teachers usually want to know before getting started.</p></div><div class="faq-list">
+      <details><summary><span data-i18n="faq_one_q">Do I need an internet connection?</span><span class="faq-plus" aria-hidden="true">+</span></summary><p data-i18n="faq_one_a">No. Photo sorting runs on your Windows computer without uploading images to a cloud service. You only need internet to visit this website or download the application.</p></details>
+      <details><summary><span data-i18n="faq_two_q">What happens to my original photos?</span><span class="faq-plus" aria-hidden="true">+</span></summary><p data-i18n="faq_two_a">KinderSort copies photos into output folders; it does not move or delete the original input photos. Start with a separate output folder and keep backups of important school files.</p></details>
+      <details><summary><span data-i18n="faq_three_q">Can it organise group photos?</span><span class="faq-plus" aria-hidden="true">+</span></summary><p data-i18n="faq_three_a">Yes. A group photo may be copied to more than one student's folder if multiple students are matched. Always review results for accuracy.</p></details>
+      <details><summary><span data-i18n="faq_four_q">What if a face isn't recognised?</span><span class="faq-plus" aria-hidden="true">+</span></summary><p data-i18n="faq_four_a">Photos without a student match go to _unmatched. Processing errors may also preserve readable copies there; check the summary and log to tell the difference.</p></details>
+    </div></section>
+  </main>
+
+  <footer class="footer"><div class="shell footer-upper"><div><a class="brand footer-brand" href="#top"><span class="brand-mark" aria-hidden="true"><span></span><span></span><span></span><span></span></span><span>Kinder<span class="brand-accent">Sort</span><span class="brand-period">.</span></span></a><p data-i18n="footer_tagline">Less time organising. More time remembering.</p></div><div class="footer-links"><a href="https://github.com/lerlerchan/KinderSort" target="_blank" rel="noopener noreferrer">GitHub ↗</a><a href="https://github.com/lerlerchan/KinderSort/releases" target="_blank" rel="noopener noreferrer"><span data-i18n="footer_releases">Releases</span> ↗</a><a href="https://github.com/lerlerchan/KinderSort/blob/main/guidebook.md" target="_blank" rel="noopener noreferrer"><span data-i18n="footer_guide">Teacher's guide</span> ↗</a></div></div><div class="shell footer-bottom"><span data-i18n="footer_note">An unofficial preview of the project website. Not yet published or endorsed by the repository owner.</span><a href="#top" data-i18n="footer_back">Back to top ↑</a></div></footer>
+</body>
+</html>

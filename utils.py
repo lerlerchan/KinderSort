@@ -5,11 +5,65 @@ No face_recognition dependency — safe to import without dlib installed.
 """
 
 import logging
+import os
 import shutil
+import stat
 from pathlib import Path
 
 SUPPORTED_EXTENSIONS = {".jpg", ".jpeg", ".png", ".bmp", ".webp"}
 
+
+class SourceReadError(OSError):
+    """Identify an OSError proven to originate from source open/read."""
+
+    def __init__(self, error: OSError):
+        """Retain the original error without exposing arbitrary payloads."""
+        super().__init__(error.errno, "Could not read source photo", error.filename)
+        self.original_error = error
+
+
+class _SourceReader:
+    """Tag source reads without catching destination writes in copyfileobj."""
+
+    def __init__(self, stream):
+        """Keep the already opened source stream."""
+        self.stream = stream
+
+    def read(self, size=-1):
+        """Wrap only the actual source read failure."""
+        try:
+            return self.stream.read(size)
+        except OSError as exc:
+            raise SourceReadError(exc) from exc
+
+def validate_folder_separation(
+    reference_folder: Path,
+    events_folder: Path,
+    output_folder: Path,
+) -> None:
+    """
+    Validate that the output folder does not overlap with
+    the reference or events folders.
+
+    Raises:
+        ValueError: If the output folder overlaps with an input folder.
+    """
+    output = output_folder.resolve()
+
+    for name, source in (
+        ("Reference", reference_folder),
+        ("Events", events_folder),
+    ):
+        resolved_source = source.resolve()
+
+        if (
+            output == resolved_source
+            or output in resolved_source.parents
+            or resolved_source in output.parents
+        ):
+            raise ValueError(
+                f"Output folder must be separate from {name} folder."
+            )
 
 def setup_logger(output_folder: Path) -> logging.Logger:
     """Create and return a logger that writes to output_folder/kindersort_log.txt.
@@ -18,6 +72,9 @@ def setup_logger(output_folder: Path) -> logging.Logger:
     development. Safe to call multiple times — duplicate handlers are avoided.
     """
     log_path = output_folder / "kindersort_log.txt"
+    # FileHandler follows links too; reject both directory reparse points and
+    # a linked log file before it can create or append outside the output.
+    _reject_linked_output(log_path)
     logger = logging.getLogger("kindersort")
     logger.setLevel(logging.DEBUG)
 
@@ -48,37 +105,56 @@ def is_image_file(path: Path) -> bool:
     return path.suffix.lower() in SUPPORTED_EXTENSIONS
 
 
+def validate_input_path(path: Path) -> os.stat_result:
+    """Fail closed on symlinks/reparse points before traversing or opening.
+
+    Inspect ancestors from the filesystem root down using lstat, so checking a
+    child never first follows a linked parent. Internal, external, dangling and
+    cyclic links are all rejected, without resolving or enumerating targets.
+    Missing or inaccessible paths also fail closed. This is a path check, not
+    an atomic guarantee against concurrent filesystem replacement.
+    """
+    absolute = path.absolute()
+    for component in reversed((absolute, *absolute.parents)):
+        info = component.lstat()
+        if stat.S_ISLNK(info.st_mode) or (
+            getattr(info, "st_file_attributes", 0)
+            & getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0x400)
+        ):
+            raise ValueError(f"Input path must not contain links or reparse points: {component}")
+    return info
+
+
 def collect_event_images(events_folder: Path) -> list[tuple[Path, str]]:
-    """Walk immediate subfolders of events_folder and collect image paths.
+    """Collect images from the Events root and its subfolders.
 
-    Returns a list of (image_path, event_name) tuples where event_name is the
-    name of the immediate subfolder containing the image.
+    Images directly inside events_folder use the root folder name
+    as their event name.
 
-    If no images are found in subfolders (e.g. the user selected an event folder
-    directly rather than its parent), falls back to scanning images placed directly
-    in events_folder root, using the folder name as the event name.
+    Images inside subfolders use the name of their immediate
+    child folder under events_folder as their event name.
+
+    Both root-level and nested images are always collected.
+    Each image is included only once. Any link/reparse point aborts collection
+    before its target is scanned; even links to internal targets are rejected.
     """
     results: list[tuple[Path, str]] = []
 
-    for item in sorted(events_folder.iterdir()):
-        if not item.is_dir():
-            continue
-        event_name = item.name
-        for image_path in sorted(item.rglob("*")):
-            if image_path.is_file() and is_image_file(image_path):
-                results.append((image_path, event_name))
+    # Do not use rglob: on Python 3.11 Windows it can descend into junctions
+    # before a caller has an opportunity to filter the yielded paths.
+    pending = [(events_folder, events_folder.name)]
+    while pending:
+        folder, event_name = pending.pop()
+        validate_input_path(folder)
+        for item in sorted(folder.iterdir()):
+            info = validate_input_path(item)
+            if stat.S_ISREG(info.st_mode) and is_image_file(item):
+                results.append((item, event_name))
+            elif stat.S_ISDIR(info.st_mode):
+                pending.append((item, item.name if folder == events_folder else event_name))
 
-    # Fallback: if no images found in subfolders, scan root of events_folder directly.
-    # This handles the case where the user selects a single event folder (flat structure).
-    if not results:
-        event_name = events_folder.name
-        for image_path in sorted(events_folder.iterdir()):
-            if image_path.is_file() and is_image_file(image_path):
-                results.append((image_path, event_name))
-
-    return results
-
-
+    return sorted(results)
+    
 def build_output_filename(event_name: str, original_filename: str) -> str:
     """Build a destination filename prefixed with the event folder name.
 
@@ -94,8 +170,23 @@ def build_output_filename(event_name: str, original_filename: str) -> str:
     return f"{event_name}__{original_filename}"
 
 
+def _reject_linked_output(folder: Path) -> None:
+    """Reject links in the output path, including Windows reparse points."""
+    absolute = folder.absolute()
+    for directory in reversed((absolute, *absolute.parents)):
+        try:
+            info = directory.lstat()
+        except FileNotFoundError:
+            continue
+        if stat.S_ISLNK(info.st_mode) or (
+            getattr(info, "st_file_attributes", 0)
+            & getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0x400)
+        ):
+            raise ValueError(f"Output directory must not contain links: {directory}")
+
+
 def safe_copy(src: Path, dest_folder: Path, filename: str, logger: logging.Logger) -> Path:
-    """Copy src to dest_folder/filename using shutil.copy2 (preserves metadata).
+    """Copy src through an exclusively created destination, preserving metadata.
 
     If a file with the same name already exists in dest_folder, appends _2, _3,
     … before the extension until a free name is found.  Creates dest_folder if
@@ -103,17 +194,67 @@ def safe_copy(src: Path, dest_folder: Path, filename: str, logger: logging.Logge
 
     Returns the final destination path.
     """
+    if (
+        not filename
+        or filename in (".", "..")
+        or Path(filename).name != filename
+        or (os.name == "nt" and ":" in filename)
+    ):
+        raise ValueError("Destination filename must be a single file name.")
+    try:
+        validate_input_path(src)
+    except OSError as exc:
+        raise SourceReadError(exc) from exc
+    _reject_linked_output(dest_folder)
     dest_folder.mkdir(parents=True, exist_ok=True)
+    _reject_linked_output(dest_folder)
 
     stem = Path(filename).stem
     suffix = Path(filename).suffix
     dest_path = dest_folder / filename
 
     counter = 2
-    while dest_path.exists():
-        dest_path = dest_folder / f"{stem}_{counter}{suffix}"
-        counter += 1
+    while True:
+        _reject_linked_output(dest_folder)
+        try:
+            destination = dest_path.open("xb")
+        except FileExistsError:
+            dest_path = dest_folder / f"{stem}_{counter}{suffix}"
+            counter += 1
+        else:
+            break
 
-    shutil.copy2(src, dest_path)
+    created = None
+    try:
+        with destination:
+            created = os.fstat(destination.fileno())
+            try:
+                validate_input_path(src)
+                source = src.open("rb")
+            except OSError as exc:
+                raise SourceReadError(exc) from exc
+            with source:
+                shutil.copyfileobj(_SourceReader(source), destination)
+        _reject_linked_output(dest_folder)
+        if not os.path.samestat(created, dest_path.lstat()):
+            raise OSError("Destination was replaced during copying.")
+        validate_input_path(src)
+        shutil.copystat(src, dest_path)
+    except BaseException as failure:
+        # Best-effort cleanup: verify file identity before unlinking.
+	# Concurrent path replacement remains possible between check and unlink.
+        try:
+            _reject_linked_output(dest_folder)
+            if created is not None:
+                if not os.path.samestat(created, dest_path.lstat()):
+                    raise OSError("Destination was replaced during failed copying.")
+                dest_path.unlink()
+        except (OSError, ValueError) as cleanup_error:
+            logger.warning("Could not safely remove incomplete copy: %s", dest_path)
+            if isinstance(failure, SourceReadError):
+                # Cleanup is an output operation: do not disguise its failure
+                # as a recoverable source error.
+                raise cleanup_error from failure
+        raise
     logger.debug("Copied %s → %s", src.name, dest_path)
     return dest_path

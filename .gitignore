@@ -11,5 +11,8 @@ dist/
 # Windows packaging output
 WinInstaller/
 *.exe
+kindersort_log.txt
+# Local D15 acceptance tool; contains machine-specific paths
+/tests/d15_gui_probe.py
 /Issues
 .claude/worktrees/vigorous-hellman/

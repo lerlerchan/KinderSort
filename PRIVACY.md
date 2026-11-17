@@ -30,7 +30,7 @@ This statement may be updated when the website or application changes. The effec
 
 ## Contact
 
-For privacy questions, contact: **[insert the responsible person's or organization's name and email address]**.
+For privacy questions, contact: **support@alirannuvesta.com**.
 
 ---
 

@@ -3,7 +3,7 @@
 const translations = {
   en: {
     announcement: 'Made for teachers. Designed to work offline.',
-    nav_features: 'Features', nav_guide: 'How it works', nav_faq: 'FAQ', nav_download: 'Get KinderSort',
+    nav_features: 'Features', nav_guide: 'How it works', nav_faq: 'FAQ', nav_download: 'Download',
     eyebrow: 'THE SIMPLER WAY TO SORT SCHOOL PHOTOS', hero_title: 'More memories.<br /><em>Less sorting.</em>',
     hero_lead: 'From sports days to school trips, KinderSort helps teachers organise event photos by student — right on their own computer.',
     hero_button: 'Download for Windows', hero_how: 'See how it works', proof_1: 'Offline by design', proof_2: 'Original photos stay untouched',
@@ -21,7 +21,7 @@ const translations = {
     step_four_title: 'Review the results', step_four_text: 'Check each student folder and manually verify important matches before sharing photos.',
     guide_title: 'Need a hand setting things up?', guide_text: 'Our step-by-step teacher guide walks you through folders, common issues and what to expect.', guide_link: 'Read the teacher guide',
     privacy_kicker: 'YOUR PHOTOS, YOUR COMPUTER', privacy_title: 'Memories belong<br /><em>with your school.</em>', privacy_text: 'KinderSort is a desktop application. Photo processing happens locally — the website does not upload or process student images.', privacy_small: 'Teachers should still follow school privacy rules, protect local folders and review matching results before sharing.',
-    download_kicker: 'READY WHEN YOU ARE', download_title: 'Give your photo folders<br />a little <em>breathing room.</em>', download_lead: 'Get the latest publicly released Windows version from the official KinderSort GitHub repository.', download_button: 'Download v1.2 (.exe)', download_release: 'View release details', release_note: 'Windows · Public release v1.2 · No installation required. This release predates the fixes proposed in PR #15; those changes are not included in this download.',
+    download_kicker: 'READY WHEN YOU ARE', download_title: 'Give your photo folders<br />a little <em>breathing room.</em>', download_lead: 'Get the latest publicly released Windows version from the official KinderSort GitHub repository.', download_button: 'Download v1.3 (.exe)', download_release: 'View release details', release_note: 'Windows · Public release v1.3 · No Python installation required. Includes the latest stability and safety fixes.',
     faq_kicker: 'GOOD TO KNOW', faq_title: 'A few quick<br /><em>questions.</em>', faq_lead: 'Answers to the things teachers usually want to know before getting started.',
     faq_one_q: 'Do I need an internet connection?', faq_one_a: 'No. Photo sorting runs on your Windows computer without uploading images to a cloud service. You only need internet to visit this website or download the application.',
     faq_two_q: 'What happens to my original photos?', faq_two_a: 'KinderSort copies photos into output folders; it does not move or delete the original input photos. Start with a separate output folder and keep backups of important school files.',
@@ -31,7 +31,7 @@ const translations = {
   },
   zh: {
     announcement: '为老师而设计，无需联网即可整理照片。',
-    nav_features: '主要功能', nav_guide: '使用方法', nav_faq: '常见问题', nav_download: '获取 KinderSort',
+    nav_features: '主要功能', nav_guide: '使用方法', nav_faq: '常见问题', nav_download: '下载',
     eyebrow: '让学校活动照片整理变得更简单', hero_title: '珍藏更多回忆。<br /><em>减少整理时间。</em>',
     hero_lead: '从运动会到校外活动，KinderSort 帮助老师按照学生姓名分类活动照片，所有处理都在自己的电脑上完成。',
     hero_button: '下载 Windows 版本', hero_how: '了解使用方法', proof_1: '离线运行', proof_2: '不修改原始照片',
@@ -49,7 +49,7 @@ const translations = {
     step_four_title: '检查分类结果', step_four_text: '查看每位学生的输出文件夹，分享前请人工核对重要照片。',
     guide_title: '不知道怎样开始？', guide_text: '老师使用指南包含详细操作步骤、文件夹说明及常见问题处理方法。', guide_link: '阅读老师使用指南',
     privacy_kicker: '照片留在自己的电脑', privacy_title: '校园的珍贵回忆<br /><em>由学校自己保管。</em>', privacy_text: 'KinderSort 是桌面应用程序，照片在电脑本地处理。这个网站不会上传或处理学生照片。', privacy_small: '使用者仍应遵守学校的隐私规定，保护本地文件夹，并在分享前人工核对匹配结果。',
-    download_kicker: '准备开始了吗？', download_title: '让照片文件夹<br /><em>变得井井有条。</em>', download_lead: '从 KinderSort 官方 GitHub 仓库获取目前公开发布的 Windows 版本。', download_button: '下载 v1.2（.exe）', download_release: '查看版本说明', release_note: 'Windows · 公开版本 v1.2 · 无需安装。此版本早于 PR #15 的安全修复，下载程序尚未包含这些待审查的修改。',
+    download_kicker: '准备开始了吗？', download_title: '让照片文件夹<br /><em>变得井井有条。</em>', download_lead: '从 KinderSort 官方 GitHub 仓库获取目前公开发布的 Windows 版本。', download_button: '下载 v1.3（.exe）', download_release: '查看版本说明', release_note: 'Windows · 公开版本 v1.3 · 无需安装 Python。包含最新的稳定性与安全修复。',
     faq_kicker: '使用前须知', faq_title: '几个常见<br /><em>问题。</em>', faq_lead: '整理了老师在使用前通常会提出的问题。',
     faq_one_q: '需要网络连接吗？', faq_one_a: '不需要。照片分类在 Windows 电脑本地进行，不会上传到云端。只有访问网站或下载程序时才需要网络。',
     faq_two_q: '原始照片会发生什么变化？', faq_two_a: 'KinderSort 会把照片复制到输出文件夹，不会移动或删除输入的原始照片。建议使用独立的输出目录，并为重要文件保留备份。',

@@ -48,6 +48,7 @@ class PhotoSorter:
         logger: logging.Logger,
     ) -> None:
         """Store folder paths and logger; initialise empty encoding dict."""
+        super().__init__()
         self.reference_folder = reference_folder
         self.events_folder = events_folder
         self.output_folder = output_folder
